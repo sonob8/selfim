@@ -168,6 +168,20 @@ class GateResult(BaseModel):
     reasons: list[str] = Field(default_factory=list)  # 拒否理由(合格時は空)
 
 
+class ExecutionEvidence(BaseModel):
+    """候補ハーネスが実行されたことのエビデンス(設計判断 D-3)。
+
+    Attributes:
+        prompt_included: system_prompt/skill モジュールの内容が実際にプロンプトへ組込まれたか。
+        module_imported: tool/verify モジュールの import(構文確認を含む)が成功したか。
+        tool_calls: 評価実行中にそのモジュールの関数が呼ばれた回数(CallLog 由来)。
+    """
+
+    prompt_included: bool = False
+    module_imported: bool = False
+    tool_calls: int = 0
+
+
 class CandidateEvaluation(BaseModel):
     """実行前スクリーニングを通過し、検証ゲートと再評価を経た候補1件の記録。"""
 
