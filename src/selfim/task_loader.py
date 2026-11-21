@@ -76,10 +76,11 @@ def load_splits(suite_dir: Path, tasks: list[TaskSpec], run_seed: str) -> tuple[
             return evolve, held
         logger.warning("splits.yaml が不完全なため決定的分割にフォールバックします")
 
-    # 決定的分割: run_seed でタスクIDをソートし、前半を evolve(奇数ならevolveが偶数側、B.2準拠)
+    # 決定的分割: run_seed でタスク順を決め、evolve を偶数側にする
+    # (論文A Appendix B.2: 奇数の場合は evolve 側が偶数を取る)
     ordered = sorted(tasks, key=lambda t: hash(f"{run_seed}:{t.task_id}"))
     n_total = len(ordered)
-    n_evolve = n_total // 2 if n_total % 2 == 0 else n_total - n_total // 2 + 1
+    n_evolve = n_total // 2 if n_total % 2 == 0 else n_total - 1
     evolve = ordered[:n_evolve]
     held = ordered[n_evolve:]
     logger.info("splits: evolve=%d held_out=%d", len(evolve), len(held))

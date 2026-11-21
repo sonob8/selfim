@@ -23,19 +23,22 @@ _MIN_TOOL_CALLS = 1
 
 
 class ValidationGate:
-    """diff行数予算を束縛し、候補の受け入れ判定を行う。
+    """diff行数予算とトークン予算を束縛し、候補の受け入れ判定を行う。
 
     Attributes:
         diff_line_budget: 1候補あたりのdiff追加/削除行数上限。
+        token_budget: 1タスクあたりの実行トークン上限(None は上限なし)。
     """
 
-    def __init__(self, diff_line_budget: int) -> None:
+    def __init__(self, diff_line_budget: int, token_budget: int | None = None) -> None:
         """予算を束縛する。
 
         Args:
             diff_line_budget: diff行数上限(config/settings.yaml の diff_line_budget)。
+            token_budget: 実行トークン上限(None は上限なし、Eq.(1) の B_tok 相当)。
         """
         self.diff_line_budget = diff_line_budget
+        self.token_budget = token_budget
 
     def check(
         self,
@@ -44,6 +47,7 @@ class ValidationGate:
         evidence: ExecutionEvidence,
         candidate_score: float,
         base_score: float,
+        candidate_tokens: int = 0,
     ) -> GateResult:
         """候補の受け入れ判定を行う。
 
@@ -56,6 +60,7 @@ class ValidationGate:
             evidence: agent_runner が収集した実行エビデンス。
             candidate_score: 候補ハーネスの evolve 再評価スコア。
             base_score: 現行ハーネスの evolve ベースラインスコア。
+            candidate_tokens: 候補実行時の最大タスクトークン(AgentOutput.tokens の最大値)。
 
         Returns:
             GateResult(passed と拒否理由のリスト)。
@@ -93,6 +98,12 @@ class ValidationGate:
         if diff_lines > self.diff_line_budget:
             reasons.append(
                 f"diff行数予算超過: {diff_lines} 行 > 予算 {self.diff_line_budget} 行"
+            )
+
+        # 条件5: トークン予算(Eq.(1) の B_tok)。上限設定時のみ判定する
+        if self.token_budget is not None and candidate_tokens > self.token_budget:
+            reasons.append(
+                f"トークン予算超過: {candidate_tokens} > 上限 {self.token_budget}"
             )
 
         passed = not reasons
