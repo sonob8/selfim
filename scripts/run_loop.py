@@ -9,7 +9,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -63,8 +65,6 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     load_dotenv(PROJECT_ROOT / ".env")
 
-    import os
-
     args = parse_args()
     settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
     provider = args.provider or os.environ.get("SELFIM_MODEL_PROVIDER", "mock")
@@ -96,7 +96,9 @@ def main() -> int:
             seed_dir=PROJECT_ROOT / "src" / "selfim" / "harness",
             workspace_dir=run_dir / "harness",
         ),
-        gate=ValidationGate(diff_line_budget=settings.diff_line_budget),
+        gate=ValidationGate(
+            diff_line_budget=settings.diff_line_budget, token_budget=settings.token_budget
+        ),
         task_model=_model("task"),
         rubric=rubric,
         run_dir=run_dir,
@@ -114,7 +116,7 @@ def main() -> int:
     report_path = run_dir / "report.json"
     report_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
     (run_dir / "splits.json").write_text(
-        __import__("json").dumps({
+        json.dumps({
             "evolve": [t.task_id for t in evolve],
             "held_out": [t.task_id for t in held_out],
         }, ensure_ascii=False, indent=2),

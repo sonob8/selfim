@@ -154,8 +154,14 @@ class AgentRunner:
         """
         module_file = {"tool": "tools.py", "verify": "verify.py"}.get(module, "")
         if module in ("system_prompt", "skill"):
-            # 組込確認: 現行モジュール内容の非空性とプロンプトへの組込は構造上保証される
-            included = len(output.prompt) > 0
+            # [FIX 2026-11-22] 組込確認を「プロンプト非空」から
+            # 「モジュール内容の実文字列照合」へ強化した。以前は new_content が
+            # 空文字列でも skill 側でプロンプトが非空になるため prompt_included=True
+            # になり、空への全置換候補がゲートを通る恐れがあった
+            # (最終diff-review 2026-11-22 で指摘、設計判断 D-3 の「内容非空+組込確認」)。
+            fname = "system_prompt.txt" if module == "system_prompt" else "skill.md"
+            content = self.read_module_source(module)
+            included = bool(content.strip()) and content.strip() in output.prompt
             return ExecutionEvidence(
                 prompt_included=included,
                 module_imported=True,
@@ -167,3 +173,16 @@ class AgentRunner:
             module_imported=imported,
             tool_calls=output.call_log.count_for(module_file),
         )
+
+    def read_module_source(self, module: str) -> str:
+        """モジュールファイルの内容を返す(組込確認用)。
+
+        Args:
+            module: モジュール名(system_prompt/skill)。
+
+        Returns:
+            ファイル内容(存在しなければ空文字)。
+        """
+        fname = {"system_prompt": "system_prompt.txt", "skill": "skill.md"}.get(module, "")
+        p = self.harness_dir / "modules" / fname
+        return p.read_text(encoding="utf-8") if p.exists() else ""

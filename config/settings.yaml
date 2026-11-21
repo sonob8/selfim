@@ -7,6 +7,8 @@ k_candidates: 3
 rollouts_per_task: 3
 # ValidationGate 予算(論文B Safe Guard 2: 編集は小さく)
 diff_line_budget: 60
+# 1タスクあたりの実行トークン上限(論文B Eq.(1) の B_tok)。null は上限なし
+token_budget: null
 # モデル割り当て(役割ごとにプロバイダ/モデルを変えられる)
 models:
   task:

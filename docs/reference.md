@@ -13,6 +13,8 @@ SIMデータベースの読み書きを担います。1 runにつき1つのJSON�
 - `.record_predicted(record, proposal, round_no, sample_id, domain="") -> SimRecord` — 採択候補の予測を評価の前に記録します。`problem_key` の参照があればそのエントリに追記し、なければ新規エントリを作ります
 - `.record_outcome(record, fixed, missed, passed, total) -> SimRecord` — 評価後に `fixed`/`missed`/`passed`/`total` を埋めます。直前の `record_predicted` の対象にのみ作用します
 - `.merge_by_exact_name(record) -> SimRecord` — 根原因名(`name`)の完全一致するエントリをマージし、`aliases` に記録します(aliasの向き先も最終IDへ書き換えます)。試行履歴は失われません
+- `.has_pending_outcome -> bool` — 予測記録済みで成果未記録の試行があるかを返します
+- `.find_problem_by_key(record, key) -> SimProblem | None` — ID・根原因名・aliasのいずれかでエントリを検索します(クラスメソッド)
 
 不採択ラウンドでは `record_predicted` / `record_outcome` を呼びません。その結果、SIMは変わりません。
 
@@ -89,16 +91,34 @@ system promptにはSIM全文と、論文A D.2の8原則が埋め込まれます�
 
 プロバイダファクトリです。
 
-- `build_model(role: str, provider: str) -> Model` — 役割(`task` / `judge` / `proposer` / `selector`)とプロバイダ(`bedrock` / `mock`)からモデルを組み立てます。設定は `.env` と `config/settings.yaml` から読みます
-- `MockModel` — 決定的な応答を返すテスト用モデルです。APIキーを必要としません
+- `build_model(role, provider, model_id="", region="us-west-2") -> Model` — 役割(`task` / `judge` / `proposer` / `selector`)とプロバイダ(`bedrock` / `mock`)からモデルを組み立てます。`model_id`/`region` はbedrock用(.env の `BEDROCK_MODEL_ID`/`BEDROCK_REGION` から渡します)
+- mock実装 — 決定的な応答を返すテスト用モデルです。ハーネス内容に敏感で(system promptの指示マーカーが出力構成を変える)、APIキーを必要としません
+- `build_proposer_prompt(...)` — Proposer用プロンプト(system promptにSIM全文とD.2の8原則を埋め込む)を組み立てる純関数です
+
+## AgentRunner (`agent_runner.py`)
+
+ハーネスディレクトリからタスクエージェントを組み立て実行します。
+
+- `AgentRunner(harness_dir, model)` — ハーネスディレクトリ(system_prompt.txt / skill.md は必須)とタスクモデルを束縛します
+- `.run_task(task) -> AgentOutput` — 1タスクを実行します。`AgentOutput` は `text` / `call_log` / `prompt` / `tokens` を持ちます
+- `.execution_evidence(output, module) -> ExecutionEvidence` — ValidationGate に渡す実行エビデンスを構築します(system_prompt/skill は内容のプロンプト組込確認、tool/verify は import成功 + CallLog の呼出数)
+- `CallLog` — モジュール実行の呼出記録。`.record(module_file, function_name)` と `.count_for(module_file)` を持ちます
+
+## task_loader (`task_loader.py`)
+
+タスクスイートの読み込みと分割を行います。
+
+- `load_suite(suite_dir) -> (list[TaskSpec], Rubric)` — tasks.yaml と rubric.yaml を読み込みます。task_id重複は拒否します
+- `load_splits(suite_dir, tasks, run_seed) -> (evolve, held_out)` — splits.yaml があればそれを優先し、なければ run_seed で決定的に分割します(奇数の場合はevolve側が偶数を取ります、論文A Appendix B.2)
 
 ## CLI (`scripts/run_loop.py`)
 
 ```sh
-uv run python scripts/run_loop.py --suite <suite> --provider <mock|bedrock> [--rounds N] [--candidates K]
+uv run python scripts/run_loop.py --suite <suite> --provider <mock|bedrock> [--rounds N] [--candidates K] [--run-id ID]
 ```
 
 - `--suite`(必須)— `data/tasks/` 配下のスイート名
 - `--provider` — 既定値は `.env` の `SELFIM_MODEL_PROVIDER`(未設定なら `mock`)
 - `--rounds` — 改善ラウンド数。既定値は `config/settings.yaml` の `n_rounds`
 - `--candidates` — 1ラウンドの候補数。既定値は `k_candidates`
+- `--run-id` — run識別子(未指定は `<suite>-<provider>-<タイムスタンプ>`)

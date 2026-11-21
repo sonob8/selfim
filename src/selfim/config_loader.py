@@ -40,6 +40,7 @@ class Settings:
     k_candidates: int = 3
     rollouts_per_task: int = 3
     diff_line_budget: int = 60
+    token_budget: int | None = None
     models: dict[str, ModelRoleConfig] = field(default_factory=dict)
 
     def provider_for_role(self, role: str, env_default: str) -> str:
@@ -56,6 +57,7 @@ _DEFAULTS: dict[str, Any] = {
     "k_candidates": 3,
     "rollouts_per_task": 3,
     "diff_line_budget": 60,
+    "token_budget": None,
     "models": {},
 }
 
@@ -84,10 +86,12 @@ def load_settings(path: Path) -> Settings:
     for role, cfg in models_raw.items():
         models[role] = ModelRoleConfig(provider=(cfg or {}).get("provider"))
 
+    raw_token_budget = raw.get("token_budget", _DEFAULTS["token_budget"])
     return Settings(
         n_rounds=int(raw.get("n_rounds", _DEFAULTS["n_rounds"])),
         k_candidates=int(raw.get("k_candidates", _DEFAULTS["k_candidates"])),
         rollouts_per_task=int(raw.get("rollouts_per_task", _DEFAULTS["rollouts_per_task"])),
         diff_line_budget=int(raw.get("diff_line_budget", _DEFAULTS["diff_line_budget"])),
+        token_budget=int(raw_token_budget) if raw_token_budget is not None else None,
         models=models,
     )

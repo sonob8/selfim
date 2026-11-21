@@ -27,6 +27,7 @@ from selfim.module_registry import ModuleRegistry
 from selfim.proposer import Proposer
 from selfim.schemas import (
     CandidateEvaluation,
+    ExecutionEvidence,
     Proposal,
     RoundRecord,
     RunReport,
@@ -116,6 +117,13 @@ class MainLoop:
         n_rounds = n_rounds if n_rounds is not None else 3
         k_candidates = k_candidates if k_candidates is not None else 3
 
+        # [FIX 2026-11-22] Proposer/Selector には evolve セットのIDのみ渡す。
+        # 以前は全タスクID(tasks)を渡していたため、mock Proposer が held-out ID を
+        # predicted に含め、SIM の fixed/missed が誤記録される実害があった
+        # (3点照合 2026-11-22 で demo-legal-002 の sim.json fixed=[] として検出)。
+        # 論文A Appendix B.2: evolve側のスコアと軌跡のみが最適化に使われる。
+        evolve_task_ids = [t.task_id for t in evolve]
+
         # snapshot は初回のみ。同一runディレクトリへの再実行は「継続」とみなし、
         # 現行ワークスペース(前回採択済みハーネス)から最適化を続ける
         # (CRSI の継続意味論に整合)。
@@ -125,8 +133,6 @@ class MainLoop:
             run_id=self.run_dir.name, suite=self.suite_name, provider="", n_rounds=n_rounds,
             k_candidates=k_candidates,
         )
-        task_ids = [t.task_id for t in tasks]
-
         # ラウンド0: シードハーネスのベースライン評価
         base_feedback = self._evaluate(self._runner_for(self.registry.workspace_dir), evolve, 0)
         base_score = base_feedback.score
@@ -153,7 +159,7 @@ class MainLoop:
                 sim_record=sim_record,
                 current_feedback=current_feedback,
                 evolve=evolve,
-                task_ids=task_ids,
+                task_ids=evolve_task_ids,
                 k_candidates=k_candidates,
                 domain=self.suite_name or "suite",
             )
@@ -219,7 +225,11 @@ class MainLoop:
         self._dump_manifest(round_no, screen, proposals)
 
         evaluated: list[CandidateEvaluation] = []
-        best_gate_passed: tuple[CandidateEvaluation, Path, SuiteFeedback] | None = None
+        # [FIX 2026-11-22] 採択IDに対応する候補ディレクトリ・評価結果をIDで直接引く。
+        # 以前は「スコア最大のゲート通過候補」を別変数で保持していたため、
+        # セレクタが別候補を採択すると SIM記録(採択候補)と昇格コード(最高候補)が
+        # 異なる候補を指す不整合が起き得た(最終diff-review 2026-11-22 で指摘)。
+        by_candidate_id: dict[str, tuple[Path, SuiteFeedback]] = {}
 
         # Stage 3: 候補適用 → 検証ゲート → evolve再評価
         for i, proposal in enumerate(screen.accepted):
@@ -235,7 +245,7 @@ class MainLoop:
             evidence = (
                 candidate_runner.execution_evidence(sample_out, proposal.target_module)
                 if sample_out is not None
-                else None
+                else ExecutionEvidence()  # 空evolveはデフォルト(全False)でゲート拒否側に倒す
             )
             gate = self.gate.check(
                 proposal=proposal,
@@ -253,8 +263,8 @@ class MainLoop:
                 diff_lines=diff_lines,
             )
             evaluated.append(ce)
-            if gate.passed and (best_gate_passed is None or ce.score > best_gate_passed[0].score):
-                best_gate_passed = (ce, candidate_dir, cand_feedback)
+            if gate.passed:
+                by_candidate_id[candidate_id] = (candidate_dir, cand_feedback)
             logger.info(
                 "candidate %s: score=%.2f gate=%s (%s)",
                 candidate_id, cand_feedback.score, gate.passed, gate.reasons,
@@ -269,12 +279,11 @@ class MainLoop:
             return record, sim_record, base_per_task, base_score
 
         chosen_ce = next(c for c in evaluated if c.candidate_id == selection.accepted_candidate_id)
-        # best_gate_passed はスコア最大のゲート通過候補。採択IDがゲート通過の
-        # 候補の中にない場合はセレクタ判断を無効とみなし不採択扱いにする。
-        if chosen_ce.score <= base_score or best_gate_passed is None:
+        # 採択IDがゲート通過候補にない場合(セレクタ判断の無効性)は不採択扱い
+        if chosen_ce.score <= base_score or chosen_ce.candidate_id not in by_candidate_id:
             return record, sim_record, base_per_task, base_score
 
-        chosen_dir, chosen_feedback = best_gate_passed[1], best_gate_passed[2]
+        chosen_dir, chosen_feedback = by_candidate_id[chosen_ce.candidate_id]
 
         # SIM更新(2段階、設計判断 D-2): 採択候補のみ記録する
         sim_record = self.sim_manager.record_predicted(

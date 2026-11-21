@@ -18,17 +18,24 @@ selfim の実装機能カタログ。README(docs/)の各機能に対応する実
 | F10 | 4段階改善ループ | `main_loop.py` | TP-6(E2E 3テスト) | docs/tutorial.md |
 | F11 | タスクスイート読込/分割 | `task_loader.py` | TP-4/TP-6経由 | docs/how-to-swap-tasks.md |
 | F12 | プロバイダ抽象化(mock/bedrock) | `models.py` / `config_loader.py` | TP-3(mock経路) | docs/how-to-swap-tasks.md「Bedrockで動かす」 |
-| F13 | タスクエージェント実行+エビデンス | `agent_runner.py` | TP-3 | docs/reference.md「CLI」 |
+| F13 | タスクエージェント実行+エビデンス | `agent_runner.py` | TP-3 | docs/reference.md「AgentRunner」 |
 | F14 | CLI実行 | `scripts/run_loop.py` | G4実デモ(legal/hr両スイート) | docs/tutorial.md手順 |
 | F15 | サンプルスイート2種 | `data/tasks/legal_judgment/` `hr_evaluation/` | G4実デモ | docs/how-to-swap-tasks.md |
 
 ## 検証状況(2026-11-22時点)
 
 - `uv run pytest tests/` → **58 passed**
-- G4実デモ:
-  - `demo-legal-002` (legal_judgment, 2ラウンドk=2): evolve 56.00 → 100.00, held-out 56.00 → 100.00, P1採択(fixed=2/2)
-  - `demo-hr-002` (hr_evaluation, 1ラウンドk=2): evolve 50.00 → 80.00, held-out 50.00 → 80.00, P1採択
+- G4実デモ(バグ修正後の再実行):
+  - `demo-legal-003` (legal_judgment, 2ラウンドk=2): evolve 56.00 → 100.00, held-out 56.00 → 100.00, P1採択(fixed=2/2, predicted=evolveタスクのみ)
+  - `demo-hr-003` (hr_evaluation, 1ラウンドk=2): evolve 50.00 → 80.00, held-out 50.00 → 80.00, P1採択(fixed=2/2)
 - 成果物配置: `output/runs/<run_id>/{sim.json, report.json, splits.json, evaluations/, harness/}`
+
+## 3点照合で修正済みの実装バグ(2026-11-22)
+
+- Proposer/Selector に誤って全タスクID(held-out含む)を渡していた → evolve IDのみに修正(held-out ID が SIM の predicted に入る実害を解消)
+- セレクタ採択IDと昇格コードが別候補を指し得る不整合 → candidate_id で直接引く方式に修正
+- 実行エビデンスが「プロンプト非空」しか見ていなかった → モジュール内容の実文字列照合に強化(設計判断 D-3)
+- token_budget が実行経路で未接続 → settings.yaml/CLI に接続
 
 ## 既知の制限(README Explanation「残した限界」と対応)
 
