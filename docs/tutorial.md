@@ -16,14 +16,20 @@ uv run python scripts/run_loop.py --suite legal_judgment --provider mock --round
 ターミナルにラウンドごとのログが流れます。次の行を探してください。
 
 ```
-[round 1] Stage 1: evaluate -> score=62.5
-[round 1] Stage 2: propose -> 2 candidates (screened: 1)
-[round 1] Stage 4: accepted candidate #1 -> new score=71.0
-[round 2] ...
-[done] held-out before=58.0 after=74.0
+failure clusters: 2 (recurring only)
+screening: accepted (required reasoning steps are omitted from the output)
+screening: rejected (required reasoning steps are omitted from the output): タスク固有ヒント: ...
+candidate_s1 evaluation (round 1): score=100.00 over 6 rollouts
+selection: accepted s1 (56.00 -> 100.00)
+SIM: predicted recorded -> P1 (round 1)
+SIM: outcome recorded -> P1 (fixed=2 missed=0)
+=== round 2 (base 100.00) ===
+round 2: kept Ht (ゲート通過候補なし)
+loop done: evolve 56.00 -> 100.00, held-out 56.00 -> 100.00
+[done] held-out before=56.00 after=100.00
 ```
 
-スコアの数字は実行ごとに変わります(MockModelは決定的ですが、初期化の乱数シードが変わるためです)。行の並び順が違えば、それはループの構造が変わったことを意味します。
+スコアの数字はスイート内容に依存します。不採択ラウンドでは `kept Ht` の行が出ます。`screening: rejected` はスクリーニングで落ちた候補(評価されず、SIMにも記録されません)です。
 
 ## 2. SIMデータベースを読む
 
@@ -80,20 +86,22 @@ diff -u src/selfim/harness/modules/system_prompt.txt output/runs/<run_id>/harnes
 cat output/runs/<run_id>/evaluations/round_1.json
 ```
 
-タスクごとに次の形式の記録が入っています。
+タスク×rolloutごとの記録が `per_task` 配列に入っています。1要素は次の形式です。
 
 ```json
 {
   "task_id": "legal-001",
+  "rollout": 0,
   "score": 70.0,
-  "reason": "結論は妥当だが、判例適用の根拠を示す思考ステップが欠落",
-  "missing_points": ["適用法令の条文確認ステップ", "反対意見の検討"],
+  "reason": "ルーブリック基準 4 項を決定的採点した。",
+  "missing_points": ["思考ステップ欠落: 反対解釈の検討"],
   "attribution": "harness"
 }
 ```
 
-- `score` がルーブリック採点の数値(0–100)、`reason` と `missing_points` が「何が不足していたか」のトレースです
+- `score` がルーブリック採点の数値(0–100)、`missing_points` が「何が不足していたか」のトレースです
 - `attribution` は失敗の切り分けです。`harness` ならハーネス欠陥、`model` ならモデルの能力限界を示します。ハーネス改善は `harness` のクラスタだけが対象になります
+- 同ディレクトリの `manifest_round_N.json` には、評価前に固定された候補の予測(`predicted`)が記録されます
 
 ## 5. 別のスイートで試す
 
@@ -107,4 +115,4 @@ uv run python scripts/run_loop.py --suite hr_evaluation --provider mock --rounds
 
 - `scripts/run_loop.py` が見つからない → プロジェクトルートで実行しているか確認してください
 - `output/` が空 → コマンドが異常終了していないか、直前のログ行を確認してください
-- スコアが低いままで変化しない → 採択候補がなかった可能性があります。ログに `kept Ht (no accepted candidate)` と出ます。SIMはこの場合変わりません
+- スコアが低いままで変化しない → 採択候補がなかった可能性があります。ログに `kept Ht` と出ます。SIMはこの場合変わりません
