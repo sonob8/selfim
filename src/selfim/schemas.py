@@ -199,6 +199,32 @@ class SelectionResult(BaseModel):
     reason: str = ""
 
 
+class ScreeningDecision(BaseModel):
+    """実行前スクリーニングでの1候補の判断。
+
+    Attributes:
+        proposal: 判断対象の候補。
+        accepted: 実行(適用・評価)に進めるか。
+        reason: 判断理由(却下時は拒否規則の名前を含む)。
+    """
+
+    proposal: Proposal
+    accepted: bool
+    reason: str = ""
+
+
+class ScreenResult(BaseModel):
+    """スクリーニング全体の結果。
+
+    Attributes:
+        accepted: 実行に進む候補のリスト(スクリーニング落ち候補は評価しない)。
+        rejected: 却下された候補とその理由。
+    """
+
+    accepted: list[Proposal] = Field(default_factory=list)
+    rejected: list[ScreeningDecision] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # SIM (論文A Appendix D.3 準拠)
 # ---------------------------------------------------------------------------

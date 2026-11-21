@@ -444,6 +444,57 @@ class StrandsJudgeModel(_StrandsBase, JudgeModel):
         )
 
 
+def build_proposer_prompt(
+    harness_sources: dict[str, str],
+    clusters: list[FailureCluster],
+    sim_text: str,
+    task_ids: list[str],
+    k: int,
+) -> tuple[str, str]:
+    """Proposer用の(system prompt, user prompt)を組み立てる(テスト可能な純関数)。
+
+    system prompt に論文A D.2 の8原則とSIM全文を埋め込む
+    (論文A §3.2: ProposerはSIM全文をsystem promptで受け取る)。
+
+    Args:
+        harness_sources: モジュール名 → 内容。
+        clusters: 失敗クラスタ。
+        sim_text: render_for_prompt の出力。
+        task_ids: タスクID一覧。
+        k: 候補数。
+
+    Returns:
+        (system_prompt, user_prompt)。
+    """
+    system = (
+        "あなたはハーネス改善の提案者です。SIM(改善履歴)全文を参照し、"
+        "以下の原則に従ってください:\n"
+        "1. エントリは過去の経験として柔軟に扱う\n"
+        "2. エントリのドメイン・ベンチマーク・モデルを確認する\n"
+        "3. 既存診断で現在の失敗を説明できるならそれを出発点にする\n"
+        "4. 根拠を再利用し、設定変更後は編集を再評価する\n"
+        "5. 新エビデンスがあれば編集を改訂・置換・上書きする\n"
+        "6. テスト済みの方向は新エビデンスがある時だけ再訪する\n"
+        "7. 既存診断で説明できない失敗は新しい問題エントリとして登録する\n"
+        "8. 似た設定ではタスク固有エビデンスを重視し、両方が変われば軽視する\n"
+        "各候補は1モジュールのみ編集し、既存根原因の引用(cites_problem)か"
+        "新規根原因の命名(new_problem_name)のどちらか一方を必ず含め、"
+        "修正される予測タスク(predicted)を必ず挙げてください。\n"
+        f"\n# SIM(全文)\n{sim_text}"
+    )
+    sources_text = "\n\n".join(f"## {name}\n{content}" for name, content in harness_sources.items())
+    clusters_text = "\n".join(
+        f"- {c.root_cause_hypothesis} (tasks={c.task_ids}, count={c.count}, "
+        f"missing={c.sample_missing_points})"
+        for c in clusters
+    )
+    user = (
+        f"# 現行ハーネス\n{sources_text}\n\n# 失敗クラスタ\n{clusters_text}\n\n"
+        f"# タスクID一覧\n{task_ids}\n\n{k}件の候補を提案してください。"
+    )
+    return system, user
+
+
 class StrandsProposerModel(_StrandsBase, ProposerModel):
     """strands Agent の構造化出力で改善候補を提案する(SIM全文+D.2原則を含む)。"""
 
@@ -475,33 +526,7 @@ class StrandsProposerModel(_StrandsBase, ProposerModel):
 
             proposals: list[ProposalOut]
 
-        # 論文A D.2 の8原則をプロンプトに埋め込む
-        system = (
-            "あなたはハーネス改善の提案者です。SIM(改善履歴)全文を参照し、"
-            "以下の原則に従ってください:\n"
-            "1. エントリは過去の経験として柔軟に扱う\n"
-            "2. エントリのドメイン・ベンチマーク・モデルを確認する\n"
-            "3. 既存診断で現在の失敗を説明できるならそれを出発点にする\n"
-            "4. 根拠を再利用し、設定変更後は編集を再評価する\n"
-            "5. 新エビデンスがあれば編集を改訂・置換・上書きする\n"
-            "6. テスト済みの方向は新エビデンスがある時だけ再訪する\n"
-            "7. 既存診断で説明できない失敗は新しい問題エントリとして登録する\n"
-            "8. 似た設定ではタスク固有エビデンスを重視し、両方が変われば軽視する\n"
-            "各候補は1モジュールのみ編集し、既存根原因の引用(cites_problem)か"
-            "新規根原因の命名(new_problem_name)のどちらか一方を必ず含め、"
-            "修正される予測タスク(predicted)を必ず挙げてください。\n"
-            f"\n# SIM(全文)\n{sim_text}"
-        )
-        sources_text = "\n\n".join(f"## {k}\n{v}" for k, v in harness_sources.items())
-        clusters_text = "\n".join(
-            f"- {c.root_cause_hypothesis} (tasks={c.task_ids}, count={c.count}, "
-            f"missing={c.sample_missing_points})"
-            for c in clusters
-        )
-        user = (
-            f"# 現行ハーネス\n{sources_text}\n\n# 失敗クラスタ\n{clusters_text}\n\n"
-            f"# タスクID一覧\n{task_ids}\n\n{k}件の候補を提案してください。"
-        )
+        system, user = build_proposer_prompt(harness_sources, clusters, sim_text, task_ids, k)
         agent = Agent(model=self._model, system_prompt=system, callback_handler=None)
         result = agent(user, structured_output_model=ProposerOutput)
         out: ProposerOutput = result.structured_output
