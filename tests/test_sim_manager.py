@@ -130,8 +130,24 @@ class TestMerge:
 
     def test_find_problem_resolves_alias(self, manager: SIMManager) -> None:
         record = manager.record_predicted(SimRecord(), _proposal(new_name="X"), 1, "s1")
-        record.aliases["P9"] = "P1"
+        record = record.model_copy(update={"aliases": {"P9": "P1"}})
         assert manager.find_problem_by_key(record, "P9") is record.problems[0]
+
+    def test_merge_rewrites_aliases_chained_to_absorbed_id(self, manager: SIMManager) -> None:
+        """[FIX 2026-11-21] aliasの向き先が吸収済みIDの場合、最終IDへ書き換えること。
+
+        過去バグ: 外部sim.json引き継ぎ等で aliases={"P7": "P2"} があり
+        P2がP1に吸収されると、P7の解決が存在しないP2に行き着きNoneを返した。
+        """
+        base = manager.record_predicted(SimRecord(), _proposal(new_name="A", what="r1"), 1, "s1")
+        dup = SimProblem(id="P2", name="A", opened_round=2, attempts=[])
+        record = base.model_copy(update={"problems": [*base.problems, dup], "aliases": {"P7": "P2"}})
+
+        merged = manager.merge_by_exact_name(record)
+
+        # P2 は P1 に吸収されたので、P7 の向き先も P1 へ書き換わる
+        assert merged.aliases == {"P2": "P1", "P7": "P1"}
+        assert manager.find_problem_by_key(merged, "P7") is merged.problems[0]
 
 
 class TestRender:

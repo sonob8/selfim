@@ -239,7 +239,20 @@ class SIMManager:
                 by_name[problem.name] = len(merged_problems)
                 merged_problems.append(problem)
 
-        return record.model_copy(update={"problems": merged_problems, "aliases": new_aliases})
+        # [FIX 2026-11-21] alias の向き先が吸収済みIDだった場合(外部sim.jsonの
+        # 引き継ぎ等で発生し得る)、吸収先の最終IDへ書き換える。これを怠ると
+        # find_problem_by_key が存在しないIDに行き着き None を返す。
+        def _resolve_final(problem_id: str, seen: set[str]) -> str:
+            while problem_id in new_aliases and problem_id not in seen:
+                seen.add(problem_id)
+                problem_id = new_aliases[problem_id]
+            return problem_id
+
+        resolved_aliases = {
+            key: _resolve_final(value, {key}) for key, value in new_aliases.items()
+        }
+
+        return record.model_copy(update={"problems": merged_problems, "aliases": resolved_aliases})
 
     # ------------------------------------------------------------------
     # プロンプト用レンダリング (論文A §3.2: 全エントリ・truncationなし)
