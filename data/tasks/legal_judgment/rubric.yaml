@@ -1,0 +1,21 @@
+# サンプルスイート1のルーブリック(ユーザー提供・差し替え可能)
+scoring_scale:
+  min: 0
+  max: 100
+criteria:
+  - name: "結論の妥当性"
+    weight: 0.3
+    description: "結論が法廷基準から論理的に導けているか"
+  - name: "思考ステップの完全性"
+    weight: 0.4
+    description: "タスクの reasoning_steps_required の各ステップが出力に明示されているか。欠落ステップは missing_points に列挙すること"
+  - name: "根拠の具体性"
+    weight: 0.2
+    description: "根拠が事実関係・条文に即して具体的か"
+  - name: "反対解釈の検討"
+    weight: 0.1
+    description: "結論に反する解釈や制限事由を検討したか"
+judge_instructions: |
+  各基準を独立に採点し、重み付き総合を 0-100 の整数で出してください。
+  不足している思考ステップや根拠は missing_points に具体的に列挙してください。
+  失敗の原因が「手順・出力形式の指示の欠如」(ハーネス欠陥)か「法的知識そのものの欠如」(モデル限界)かを attribution に示してください。

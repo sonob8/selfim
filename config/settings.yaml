@@ -1,0 +1,19 @@
+# selfim ループ設定
+# 改善ラウンド数(論文A §4.1 は N=10、デモ用に既定は小さくしている)
+n_rounds: 3
+# 1ラウンドの候補提案数(論文A §4.1 は k=5)
+k_candidates: 3
+# 1タスクあたりのrollout数(論文A Appendix B は 5)
+rollouts_per_task: 3
+# ValidationGate 予算(論文B Safe Guard 2: 編集は小さく)
+diff_line_budget: 60
+# モデル割り当て(役割ごとにプロバイダ/モデルを変えられる)
+models:
+  task:
+    provider: null      # null は SELFIM_MODEL_PROVIDER に従う
+  judge:
+    provider: null
+  proposer:
+    provider: null
+  selector:
+    provider: null

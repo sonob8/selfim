@@ -1,0 +1,21 @@
+# サンプルスイート2のルーブリック(ユーザー提供・差し替え可能)
+scoring_scale:
+  min: 0
+  max: 100
+criteria:
+  - name: "判定・分析の妥当性"
+    weight: 0.3
+    description: "等級判定・昇進判定・要因分析が評価基準や事実から論理的に導けているか"
+  - name: "思考ステップの完全性"
+    weight: 0.4
+    description: "タスクの reasoning_steps_required の各ステップが出力に明示されているか。欠落ステップは missing_points に列挙すること"
+  - name: "事実への即した言及"
+    weight: 0.2
+    description: "判断が評価対象者の具体的な数値・記録に即しているか"
+  - name: "公平性への配慮"
+    weight: 0.1
+    description: "環境要因と個人要因の切り分けなど、公平性の観点を検討したか"
+judge_instructions: |
+  各基準を独立に採点し、重み付き総合を 0-100 の整数で出してください。
+  不足している思考ステップや根拠は missing_points に具体的に列挙してください。
+  失敗の原因が「出力手順・構成の指示の欠如」(ハーネス欠陥)か「評価の知識・判断力そのものの欠如」(モデル限界)かを attribution に示してください。
