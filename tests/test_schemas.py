@@ -3,9 +3,19 @@
 検証観点:
 - SIMスキーマが論文A D.3 の全フィールドをJSON roundtripで保持する
 - Proposal の引用/新規命名の排他制約と predicted 非空制約
+- Docker実行系のInvocationEnvelope系スキーマ(JSON往復)とModuleNameの7値化
 """
 
-from selfim.schemas import Proposal, SimAttempt, SimProblem, SimRecord
+from selfim.schemas import (
+    InvocationEnvelope,
+    ModuleName,
+    Proposal,
+    ShipManifest,
+    SimAttempt,
+    SimProblem,
+    SimRecord,
+    TokenUsage,
+)
 
 import pytest
 
@@ -118,3 +128,110 @@ class TestProposalConstraints:
             predicted=["t1"],
         )
         assert p.problem_key == "P3"
+
+
+class TestModuleName:
+    """ModuleName がDocker足場を含む7モジュールに拡張されていること。"""
+
+    def test_all_seven_modules_are_valid_targets(self) -> None:
+        # [DECISION 2026-11-22] 足場(entrypoint/dockerfile/requirements)も編集対象化。
+        # typing.get_args で Literal の全許容値を検証する。
+        from typing import get_args
+
+        assert set(get_args(ModuleName)) == {
+            "system_prompt",
+            "skill",
+            "tool",
+            "verify",
+            "entrypoint",
+            "dockerfile",
+            "requirements",
+        }
+
+    def test_proposal_accepts_scaffold_module(self) -> None:
+        p = Proposal(
+            new_problem_name="dependency missing in image",
+            target_module="requirements",
+            what="パッケージ追加",
+            new_content="strands-agents>=1.65.0\n",
+            predicted=["t1"],
+        )
+        assert p.target_module == "requirements"
+
+
+class TestInvocationEnvelope:
+    """コンテナ⇔ホスト間の往復ペイロード(InvocationEnvelope)のスキーマ。
+
+    検証観点:
+    - レスポンスJSON形式(ok/output_text/composed_prompt/call_log/token_usage/error)の解析
+    - 呼び出し失敗(ok=False, error入り)でもパースできる
+    - 既定値で空のエンベロープが作れる(失敗時のフォールバック用)
+    """
+
+    def test_parse_full_response_json(self) -> None:
+        payload = {
+            "ok": True,
+            "output_text": "結論: ...",
+            "composed_prompt": "あなたは裁判官...",
+            "call_log": [
+                {"module_file": "tools.py", "function_name": "outline"},
+                {"module_file": "verify.py", "function_name": "build_checklist"},
+            ],
+            "token_usage": {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
+            "error": "",
+        }
+        env = InvocationEnvelope.model_validate(payload)
+
+        assert env.ok is True
+        assert env.output_text == "結論: ..."
+        assert env.composed_prompt == "あなたは裁判官..."
+        assert [e.function_name for e in env.call_log] == ["outline", "build_checklist"]
+        assert env.token_usage.total_tokens == 30
+
+    def test_roundtrip_preserves_fields(self) -> None:
+        env = InvocationEnvelope(
+            ok=False,
+            output_text="",
+            error="container exited",
+            token_usage=TokenUsage(input_tokens=1, output_tokens=2, total_tokens=3),
+        )
+        restored = InvocationEnvelope.model_validate_json(env.model_dump_json())
+
+        assert restored.ok is False
+        assert restored.error == "container exited"
+        assert restored.token_usage.output_tokens == 2
+        assert restored.call_log == []
+
+    def test_defaults_are_empty(self) -> None:
+        env = InvocationEnvelope()
+        assert env.ok is True
+        assert env.output_text == ""
+        assert env.call_log == []
+        assert env.token_usage.total_tokens == 0
+        assert env.error == ""
+
+
+class TestShipManifest:
+    """出荷成果物のメタデータ(ship.json)のスキーマ。"""
+
+    def test_manifest_serializes_all_fields(self) -> None:
+        manifest = ShipManifest(
+            image_tag="selfim-run1-final",
+            image_digest="sha256:abc123",
+            tar_path="output/runs/run1/ship/agent-image.tar",
+            module_hashes={"system_prompt": "deadbeef", "dockerfile": "cafebabe"},
+            evolve_before=40.0,
+            evolve_final=80.0,
+            held_out_before=45.0,
+            held_out_after=75.0,
+            sim_problem_count=3,
+            executor="docker",
+            model_provider="mock",
+            args={"suite": "legal_judgment", "rounds": 2},
+        )
+        restored = ShipManifest.model_validate_json(manifest.model_dump_json())
+
+        assert restored.image_tag == "selfim-run1-final"
+        assert restored.module_hashes["dockerfile"] == "cafebabe"
+        assert restored.evolve_final == 80.0
+        assert restored.args["rounds"] == 2

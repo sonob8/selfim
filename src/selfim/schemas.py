@@ -18,7 +18,20 @@ from pydantic import BaseModel, Field, model_validator
 # - skill:        Agent Control(手順知識)
 # - tool:         Action Interface
 # - verify:       Verification & Recovery
-ModuleName = Literal["system_prompt", "skill", "tool", "verify"]
+# [DECISION 2026-11-22] Docker足場も編集対象に追加(ユーザー決定)。候補ハーネスを
+# イメージ化してAgentCore互換コンテナで実行するため、足場も改善対象とした。
+# - entrypoint:   Agent Control(実行時コード)+ Action Interface 接続(scaffold/entrypoint.py)
+# - dockerfile:   デプロイ境界(scaffold/Dockerfile)
+# - requirements: 依存境界(scaffold/requirements.txt)
+ModuleName = Literal[
+    "system_prompt",
+    "skill",
+    "tool",
+    "verify",
+    "entrypoint",
+    "dockerfile",
+    "requirements",
+]
 
 # 失敗の帰属先。harness=ハーネス欠陥(改善対象)、model=モデルの能力限界(改善対象外)。
 Attribution = Literal["harness", "model", "unknown"]
@@ -318,3 +331,85 @@ class RunReport(BaseModel):
     held_out_after: float = 0.0
     evolve_before: float = 0.0
     evolve_final: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Docker実行系(コンテナ⇔ホスト間のペイロードと出荷メタデータ)
+# [DECISION 2026-11-22] AgentCore互換コンテナ実行の追加に伴うスキーマ群。
+# コンテナは POST /invocations で TaskSpec を受け取り InvocationEnvelope を返す。
+# ---------------------------------------------------------------------------
+
+
+class CallLogEntry(BaseModel):
+    """コンテナ内で記録されたモジュール関数呼出1件(serialize対象)。
+
+    Attributes:
+        module_file: 呼び出された関数が属するモジュールファイル名(tools.py 等)。
+        function_name: 呼び出された関数名。
+    """
+
+    module_file: str
+    function_name: str
+
+
+class TokenUsage(BaseModel):
+    """コンテナ内モデル呼出のトークン使用量(strands の usage メタデータ由来)。
+
+    ローカル実行系の len//4 ヒューリスティックと置き換え、
+    docker実行系では実測値をここに格納する。
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class InvocationEnvelope(BaseModel):
+    """コンテナ内エージェント実行1回分の応答ペイロード。
+
+    Attributes:
+        ok: 実行成否(False なら error に理由が入る)。
+        output_text: エージェントの生出力。
+        composed_prompt: コンテナ内で実際に組成されたプロンプト
+            (system_prompt+skill。実行証拠の包含判定に使う)。
+        call_log: モジュール関数の実呼出記録(実行証拠の tool_calls 判定に使う)。
+        token_usage: モデル使用量(mock は 0 のまま)。
+        error: 失敗時の理由(成功時は空文字)。
+    """
+
+    ok: bool = True
+    output_text: str = ""
+    composed_prompt: str = ""
+    call_log: list[CallLogEntry] = Field(default_factory=list)
+    token_usage: TokenUsage = Field(default_factory=TokenUsage)
+    error: str = ""
+
+
+class ShipManifest(BaseModel):
+    """出荷成果物のメタデータ(output/runs/<run_id>/ship/ship.json)。
+
+    Attributes:
+        image_tag: 出荷イメージのdockerタグ(selfim-<run_id>-final)。
+        image_digest: イメージのdigest(取れない場合はsha256形式のID短縮)。
+        tar_path: docker save したtarの相対パス。
+        module_hashes: モジュール名→sha256(出荷時点のハーネス内容の指紋)。
+        evolve_before / evolve_final: evolveセットの初期/最終スコア。
+        held_out_before / held_out_after: held-outセットの初期/最終スコア。
+        sim_problem_count: 出荷時点のSIM根原因エントリ数。
+        executor: 実行系(local / docker)。
+        model_provider: タスクモデルプロバイダ(mock / bedrock)。
+        args: 実行時引数(スイート名・ラウンド数等)。
+    """
+
+    image_tag: str
+    image_digest: str = ""
+    tar_path: str = ""
+    module_hashes: dict[str, str] = Field(default_factory=dict)
+    evolve_before: float = 0.0
+    evolve_final: float = 0.0
+    held_out_before: float = 0.0
+    held_out_after: float = 0.0
+    sim_problem_count: int = 0
+    executor: str = "docker"
+    model_provider: str = "mock"
+    args: dict[str, object] = Field(default_factory=dict)
