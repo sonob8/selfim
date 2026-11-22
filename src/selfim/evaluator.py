@@ -16,7 +16,7 @@ import logging
 from collections import Counter
 from typing import Any
 
-from selfim.agent_runner import AgentRunner
+from selfim.agent_runner import TaskRunner
 from selfim.models import JudgeModel
 from selfim.schemas import (
     Attribution,
@@ -93,7 +93,7 @@ class Evaluator:
 
     def run_suite(
         self,
-        runner: AgentRunner,
+        runner: TaskRunner,
         rubric: Rubric,
         tasks: list[TaskSpec],
         rollouts: int,
@@ -103,7 +103,8 @@ class Evaluator:
         """タスクセット全体を評価する(タスク × rollouts 回の実行と採点)。
 
         Args:
-            runner: harness_dir に束縛済みの AgentRunner。
+            runner: harness_dir に束縛済みの TaskRunner
+                (local: AgentRunner / docker: DockerAgentRunner)。
             rubric: ルーブリック。
             tasks: 評価対象タスク。
             rollouts: タスクごとの実行回数。

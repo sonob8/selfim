@@ -19,9 +19,9 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from selfim.agent_runner import AgentRunner
+from selfim.agent_runner import AgentRunner, TaskRunner
 from selfim.evaluator import Evaluator
 from selfim.module_registry import ModuleRegistry
 from selfim.proposer import Proposer
@@ -70,6 +70,7 @@ class MainLoop:
         run_dir: Path,
         rollouts_per_task: int,
         suite_name: str = "",
+        runner_factory: Callable[[Path], TaskRunner] | None = None,
     ) -> None:
         """コンポーネント群を束縛する。
 
@@ -80,6 +81,10 @@ class MainLoop:
             run_dir: run成果物ディレクトリ。
             rollouts_per_task: 1タスクあたりのrollout数。
             suite_name: スイート名(SIMのdomainフィールドとレポートに記録される)。
+            runner_factory: 実行器ファクトリ(ハーネスディレクトリ → TaskRunner)。
+                None なら local 実行系(AgentRunner)をその場で組む。
+                docker実行系では DockerAgentRunner を組むファクトリを渡す
+                ([DECISION 2026-11-22] 実行系の選択をこのシームに集約)。
         """
         self.evaluator = evaluator
         self.proposer = proposer
@@ -92,6 +97,7 @@ class MainLoop:
         self.run_dir = run_dir
         self.rollouts_per_task = rollouts_per_task
         self.suite_name = suite_name
+        self._runner_factory = runner_factory
         self._evaluations_dir = run_dir / "evaluations"
         self._evaluations_dir.mkdir(parents=True, exist_ok=True)
 
@@ -134,14 +140,14 @@ class MainLoop:
             k_candidates=k_candidates,
         )
         # ラウンド0: シードハーネスのベースライン評価
-        base_feedback = self._evaluate(self._runner_for(self.registry.workspace_dir), evolve, 0)
+        base_feedback = self._evaluate_harness(self.registry.workspace_dir, evolve, 0)
         base_score = base_feedback.score
         base_per_task = self._per_task_scores(base_feedback)
         report.evolve_before = base_score
 
         # held-out before(ループ外で実施、候補には渡さない)
-        held_before = self._evaluate(
-            self._runner_for(self.registry.workspace_dir), held_out, 0, label="held_out"
+        held_before = self._evaluate_harness(
+            self.registry.workspace_dir, held_out, 0, label="held_out"
         )
         report.held_out_before = held_before.score
 
@@ -149,8 +155,8 @@ class MainLoop:
 
         for round_no in range(1, n_rounds + 1):
             logger.info("=== round %d (base %.2f) ===", round_no, base_score)
-            current_feedback = self._evaluate(
-                self._runner_for(self.registry.workspace_dir), evolve, round_no
+            current_feedback = self._evaluate_harness(
+                self.registry.workspace_dir, evolve, round_no
             )
             record, sim_record, base_per_task, base_score = self._run_round(
                 round_no=round_no,
@@ -169,8 +175,8 @@ class MainLoop:
             self._dump_round_feedback(round_no, current_feedback, record)
 
         report.evolve_final = base_score
-        held_after = self._evaluate(
-            self._runner_for(self.registry.workspace_dir), held_out, n_rounds, label="held_out"
+        held_after = self._evaluate_harness(
+            self.registry.workspace_dir, held_out, n_rounds, label="held_out"
         )
         report.held_out_after = held_after.score
         logger.info(
@@ -235,26 +241,31 @@ class MainLoop:
         for i, proposal in enumerate(screen.accepted):
             candidate_id = f"s{i + 1}"
             candidate_dir = self.registry.apply_candidate(proposal, candidate_id)
+            # [DECISION 2026-11-22] docker実行系はコンテナを保持するため、
+            # 候補ごとの評価ブロック全体を try/finally で閉じ、確実に close する。
             candidate_runner = self._runner_for(candidate_dir)
-            cand_feedback = self._evaluate(
-                candidate_runner, evolve, round_no, label=f"candidate_{candidate_id}"
-            )
-            diff_lines = self.registry.diff_line_count(proposal.target_module, candidate_dir)
-            # 実行エビデンスはサンプルタスクの実際の実行から得る(設計判断 D-3)
-            sample_out = candidate_runner.run_task(evolve[0]) if evolve else None
-            evidence = (
-                candidate_runner.execution_evidence(sample_out, proposal.target_module)
-                if sample_out is not None
-                else ExecutionEvidence()  # 空evolveはデフォルト(全False)でゲート拒否側に倒す
-            )
-            gate = self.gate.check(
-                proposal=proposal,
-                diff_lines=diff_lines,
-                evidence=evidence,
-                candidate_score=cand_feedback.score,
-                base_score=base_score,
-                candidate_tokens=sample_out.tokens if sample_out is not None else 0,
-            )
+            try:
+                cand_feedback = self._evaluate(
+                    candidate_runner, evolve, round_no, label=f"candidate_{candidate_id}"
+                )
+                diff_lines = self.registry.diff_line_count(proposal.target_module, candidate_dir)
+                # 実行エビデンスはサンプルタスクの実際の実行から得る(設計判断 D-3)
+                sample_out = candidate_runner.run_task(evolve[0]) if evolve else None
+                evidence = (
+                    candidate_runner.execution_evidence(sample_out, proposal.target_module)
+                    if sample_out is not None
+                    else ExecutionEvidence()  # 空evolveはデフォルト(全False)でゲート拒否側に倒す
+                )
+                gate = self.gate.check(
+                    proposal=proposal,
+                    diff_lines=diff_lines,
+                    evidence=evidence,
+                    candidate_score=cand_feedback.score,
+                    base_score=base_score,
+                    candidate_tokens=sample_out.tokens if sample_out is not None else 0,
+                )
+            finally:
+                candidate_runner.close()
             ce = CandidateEvaluation(
                 candidate_id=candidate_id,
                 proposal=proposal,
@@ -312,12 +323,38 @@ class MainLoop:
     # ヘルパー
     # ------------------------------------------------------------------
 
-    def _runner_for(self, harness_dir: Path) -> AgentRunner:
-        """指定ハーネスディレクトリに束縛した AgentRunner を作る。"""
+    def _runner_for(self, harness_dir: Path) -> TaskRunner:
+        """指定ハーネスディレクトリに束縛した実行器を作る。
+
+        [DECISION 2026-11-22] 実行系(local/docker)の選択をこのシームに集約する。
+        runner_factory が渡されていればそれを使い、なければ従来どおり
+        in-process の AgentRunner を組む(既存テスト・local実行は無変更で動作)。
+        呼び出し側は使用後に必ず close() すること(docker実行系はコンテナ停止を伴う)。
+        """
+        if self._runner_factory is not None:
+            return self._runner_factory(harness_dir)
         return AgentRunner(harness_dir=harness_dir, model=self.task_model)
 
+    def _evaluate_harness(
+        self,
+        harness_dir: Path,
+        tasks: list[TaskSpec],
+        round_no: int,
+        label: str = "evolve",
+    ) -> SuiteFeedback:
+        """実行器を組立てて評価し、使用後に必ず後始末する。
+
+        docker実行系では実行器がコンテナを保持するため、評価ごとに
+        生成・破棄を確実に行う(try/finally で close を保証)。
+        """
+        runner = self._runner_for(harness_dir)
+        try:
+            return self._evaluate(runner, tasks, round_no, label=label)
+        finally:
+            runner.close()
+
     def _evaluate(
-        self, runner: AgentRunner, tasks: list[TaskSpec], round_no: int, label: str = "evolve"
+        self, runner: TaskRunner, tasks: list[TaskSpec], round_no: int, label: str = "evolve"
     ) -> SuiteFeedback:
         """タスクセットを評価する薄いラッパー。"""
         return self.evaluator.run_suite(
