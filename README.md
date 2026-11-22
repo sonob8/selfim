@@ -11,9 +11,13 @@ LLMエージェントのハーネス(System Prompt / Skill / Tool定義)を、�
 
 **やること**
 
-- strands-agents エージェントの4モジュール(system prompt / skill / tool / verify)を1ラウンド1モジュールで改善
+- strands-agents エージェントの7モジュール(system prompt / skill / tool / verify に加え、
+  Docker足場の entrypoint / Dockerfile / requirements)を1ラウンド1モジュールで改善
 - ユーザー提供のルーブリックに基づくLLM-as-a-Judge評価(数値スコア + 不足点トレース)
 - 改善の予測と実際の成果をSIMに記録し、以降の提案に反映
+- docker実行系では候補ハーネスを**そのままビルド可能なイメージ**として扱い、
+  AgentCore互換IF(POST /invocations)で評価。勝者ハーネスは tar イメージとして出荷
+  (AgentCore Runtime / ECS 等へ持ち出し可能)
 
 **やらないこと**
 
@@ -26,6 +30,7 @@ LLMエージェントのハーネス(System Prompt / Skill / Tool定義)を、�
 | 目的 | ドキュメント |
 |---|---|
 | MockModelでループを初めて回す | [docs/tutorial.md](docs/tutorial.md) |
+| Dockerでループを回してイメージを出荷する | [docs/docker.md](docs/docker.md) |
 | 自分のタスクとルーブリックに差し替える | [docs/how-to-swap-tasks.md](docs/how-to-swap-tasks.md) |
 | コンポーネントのAPIを調べる | [docs/reference.md](docs/reference.md) |
 | なぜこの設計か(両論文の統合) | [docs/explanation.md](docs/explanation.md) |
@@ -42,7 +47,19 @@ APIキーは不要です。プロバイダを `bedrock` に切り替えるまで
 ## 最小の実行例
 
 ```sh
+# local実行系(in-process・高速・キー不要)
 uv run python scripts/run_loop.py --suite legal_judgment --provider mock --rounds 2 --candidates 2
+
+# docker実行系(候補をイメージ化してAgentCore互換コンテナで評価・出荷)
+uv run python scripts/run_loop.py --suite legal_judgment --provider mock --executor docker --rounds 2 --candidates 2
 ```
 
-このコマンドは、同梱サンプルスイート(裁判の判断タスク)を2ラウンド改善し、`output/runs/<run_id>/` に改善後のハーネス、`sim.json`、評価ログを書き出します。何が起きているかは [docs/tutorial.md](docs/tutorial.md) で一歩ずつ追えます。
+このコマンドは、同梱サンプルスイート(裁判の判断タスク)を2ラウンド改善し、`output/runs/<run_id>/` に改善後のハーネス、`sim.json`、評価ログを書き出します。docker実行系ではさらに `ship/agent-image.tar`(出荷イメージ)と `ship/ship.json` が生成されます。何が起きているかは [docs/tutorial.md](docs/tutorial.md) と [docs/docker.md](docs/docker.md) で一歩ずつ追えます。
+
+## テスト
+
+```sh
+uv run pytest              # docker不要の全テスト(既定。docker系はスキップ)
+uv run pytest -m docker    # 実Dockerを使うテストのみ
+uv run pytest -m docker_e2e  # 全体ループのdocker E2E(遅い)
+```

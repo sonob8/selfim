@@ -19,6 +19,8 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 既定では遅いdocker E2Eを除外する(明示的に実行するには -m docker_e2e)
+addopts = "-m 'not docker_e2e'"
 markers = [
     "docker: Docker デーモンが必要なテスト(実コンテナ起動を含む)",
     "docker_e2e: 遅いdocker E2E(イメージビルドを含む全体ループ)",

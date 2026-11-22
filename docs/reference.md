@@ -97,12 +97,38 @@ system promptにはSIM全文と、論文A D.2の8原則が埋め込まれます�
 
 ## AgentRunner (`agent_runner.py`)
 
-ハーネスディレクトリからタスクエージェントを組み立て実行します。
+ハーネスディレクトリからタスクエージェントを組み立て実行します(local実行系)。
 
+- `TaskRunner`(Protocol)— 実行器のインタフェース。`run_task` / `execution_evidence` / `close` を要求します(local: `AgentRunner` / docker: `DockerAgentRunner`)
 - `AgentRunner(harness_dir, model)` — ハーネスディレクトリ(system_prompt.txt / skill.md は必須)とタスクモデルを束縛します
-- `.run_task(task) -> AgentOutput` — 1タスクを実行します。`AgentOutput` は `text` / `call_log` / `prompt` / `tokens` を持ちます
-- `.execution_evidence(output, module) -> ExecutionEvidence` — ValidationGate に渡す実行エビデンスを構築します(system_prompt/skill は内容のプロンプト組込確認、tool/verify は import成功 + CallLog の呼出数)
-- `CallLog` — モジュール実行の呼出記録。`.record(module_file, function_name)` と `.count_for(module_file)` を持ちます
+- `.run_task(task) -> AgentOutput` — 1タスクを実行します。`AgentOutput` は `text` / `call_log` / `prompt` / `tokens` / `envelope`(docker時) / `error` を持ちます
+- `.execution_evidence(output, module) -> ExecutionEvidence` — ValidationGate に渡す実行エビデンスを構築します(system_prompt/skill は内容のプロンプト組込確認、tool/verify は import成功 + CallLog の呼出数、足場は build_ok/smoke_ok)
+- `build_execution_evidence(output, module, harness_dir, build_ok, smoke_ok)` — local/docker共通の証拠生成関数
+- `CallLog` — モジュール実行の呼出記録。`.record(module_file, function_name)` と `.count_for(module_file)` を持ちます。`.from_envelope(envelope)` でコンテナ応答から復元できます
+
+## DockerAgentRunner (`docker_executor.py`)
+
+候補ハーネスをイメージ化してコンテナ実行する TaskRunner 実装(docker実行系)。
+
+- `ImageBuilder(client=None).build(context_dir, tag, timeout_sec) -> BuildResult` — 候補ディレクトリ(scaffold/Dockerfile 使用)からイメージをビルドします。失敗は例外ではなく `BuildResult(ok=False, log_tail=...)` で返します
+- `DockerAgentRunner(harness_dir, model_provider, run_id, candidate_label, settings, logs_dir, ...)` — 初回 `run_task` 時にビルド→起動→/ping待ちを行い、以降は `/invocations` を使います。タグは `selfim-<run_id>-<label>`
+- `.build_ok` / `.smoke_ok` — ビルド・スモーク成否(ValidationGate へ渡される)
+- `.close()` — コンテナを停止・削除します(ログを `logs/` へ保存)
+- 失敗(ビルド失敗・HTTPエラー・ok=False)は `[INVOCATION_ERROR]` 付きの出力に変換され、通常の評価フローで拒否されます
+
+## ContainerSession (`container_session.py`)
+
+- `ContainerSession(client, image_tag, name, env, ...)` — 1候補=1コンテナのライフサイクル管理。`start()`(エフェメラルポート+ループバック限定で起動し/ping待ち)、`invoke(payload)`(/invocations へPOST)、`stop()`(ログ保存+削除)。`with` ブロックでも使えます
+
+## Shipper (`shipper.py`)
+
+- `Shipper(client=None).ship(harness_dir, report, sim_record, run_id, executor, model_provider, args) -> ShipManifest | None` — 勝者ハーネスから `selfim-<run_id>-final` をビルドし、`<run_dir>/ship/agent-image.tar`(docker save)と `ship.json` を書き出します。ビルド失敗時は None を返します
+
+## シードハーネス足場 (`src/selfim/harness/`)
+
+- `modules/` — 編集可能な4コンテンツモジュール(従来どおり)
+- `scaffold/` — 編集可能な足場(`entrypoint.py` の `run_task(task) -> dict` 契約 / `Dockerfile` / `requirements.txt`)
+- `runtime/` — 固定ランタイム(`app.py`: BedrockAgentCoreApp 配線、`agent_runtime.py`: モジュール読込・プロバイダ選択・CallLog、`mock_provider.py` / `bedrock_provider.py`: コンテナ内プロバイダ)
 
 ## task_loader (`task_loader.py`)
 
@@ -114,11 +140,13 @@ system promptにはSIM全文と、論文A D.2の8原則が埋め込まれます�
 ## CLI (`scripts/run_loop.py`)
 
 ```sh
-uv run python scripts/run_loop.py --suite <suite> --provider <mock|bedrock> [--rounds N] [--candidates K] [--run-id ID]
+uv run python scripts/run_loop.py --suite <suite> --provider <mock|bedrock> [--executor <local|docker>] [--rounds N] [--candidates K] [--run-id ID]
 ```
 
 - `--suite`(必須)— `data/tasks/` 配下のスイート名
 - `--provider` — 既定値は `.env` の `SELFIM_MODEL_PROVIDER`(未設定なら `mock`)
+- `--executor` — `local`(in-process高速)/ `docker`(AgentCore互換コンテナ)。既定値は環境変数 `SELFIM_EXECUTOR`、さらに `config/settings.yaml` の `executor`
 - `--rounds` — 改善ラウンド数。既定値は `config/settings.yaml` の `n_rounds`
 - `--candidates` — 1ラウンドの候補数。既定値は `k_candidates`
 - `--run-id` — run識別子(未指定は `<suite>-<provider>-<タイムスタンプ>`)
+- docker実行系ではループ完了後、`ship.enabled: true` なら出荷ステップ(最終イメージの docker save + ship.json)が走ります
