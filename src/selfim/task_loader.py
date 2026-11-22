@@ -7,6 +7,7 @@ data/tasks/<suite>/ 配下のファイルを読み込み、TaskSpec と Rubric �
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 
@@ -78,7 +79,13 @@ def load_splits(suite_dir: Path, tasks: list[TaskSpec], run_seed: str) -> tuple[
 
     # 決定的分割: run_seed でタスク順を決め、evolve を偶数側にする
     # (論文A Appendix B.2: 奇数の場合は evolve 側が偶数を取る)
-    ordered = sorted(tasks, key=lambda t: hash(f"{run_seed}:{t.task_id}"))
+    # [FIX 2026-11-22] 組み込み hash() は PYTHONHASHSEED の影響でプロセス間で
+    # 非決定だった。sha256 ベースに置換し、同一 run_seed なら必ず同一分割になるようにした
+    # (新規コンテキストレビュー 2026-11-22 で指摘。held-out before/after 比較の前提)。
+    ordered = sorted(
+        tasks,
+        key=lambda t: hashlib.sha256(f"{run_seed}:{t.task_id}".encode()).hexdigest(),
+    )
     n_total = len(ordered)
     n_evolve = n_total // 2 if n_total % 2 == 0 else n_total - 1
     evolve = ordered[:n_evolve]

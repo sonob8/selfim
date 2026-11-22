@@ -400,7 +400,14 @@ class _StrandsBase:
         if self._agent_cls is None:
             Agent, BedrockModel = _require_strands()  # type: ignore[misc]
             self._agent_cls = Agent
-            self._model = BedrockModel(model_id=self.model_id, region_name=self.region)
+            # [DECISION 2026-11-22] streaming=False とする。strands の既定は
+            # converse_stream だが、(a) 実行結果の完全なレスポンスを同期的に得たい、
+            # (b) moto 等の AWS API エミュレータは converse_stream のイベントストリーム
+            # を再現できない、ため非ストリーミング converse を使う。トークン単位の
+            # ストリーム表示は本システムの要件外である。
+            self._model = BedrockModel(
+                model_id=self.model_id, region_name=self.region, streaming=False
+            )
         return self._agent_cls
 
 
@@ -592,29 +599,40 @@ class StrandsTaskModel(_StrandsBase, TaskModel):
     def run_task(self, sources: dict[str, str], task: TaskSpec, call_log: Any) -> str:
         Agent = self._ensure()
         system = sources.get("system_prompt", "") + "\n" + sources.get("skill", "")
+
+        # [FIX 2026-11-22] verify モジュールの実行を CallLog に記録する。
+        # 以前はプロンプトへ注入するだけで記録しなかったため、bedrock モードでは
+        # verify への全 Proposal が「実行エビデンスなし」で恒久的にゲート拒否されていた
+        # (新規コンテキストレビュー 2026-11-22 で指摘。ValidationGate の D-3 要件)。
         if sources.get("verify_code"):
             try:
                 namespace: dict[str, Any] = {}
                 exec(compile(sources["verify_code"], "<verify>", "exec"), namespace)  # noqa: S102
                 build = namespace.get("build_checklist")
                 if callable(build):
-                    items = "\n".join(f"- {x}" for x in build(task.task_id))
-                    system += f"\n\n# 完了前チェックリスト\n{items}"
+                    items = build(task.task_id)
+                    items_text = "\n".join(f"- {x}" for x in items)
+                    system += f"\n\n# 完了前チェックリスト\n{items_text}"
+                    call_log.record("verify.py", "build_checklist")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("verify module execution failed: %s", exc)
 
         tools = self._load_tools(sources.get("tool_code", ""))
-        for _ in tools:
-            call_log.record("tools.py", "strands_tool")
         agent = Agent(model=self._model, system_prompt=system, tools=tools, callback_handler=None)
         user = f"{task.prompt}\n\n{task.context}"
         result = agent(user)
-        # result.message は角色付きメッセージ辞書。テキスト部分を連結して返す。
-        content = result.message.get("content", []) if isinstance(result.message, dict) else []
+        # [FIX 2026-11-22] tools の呼出記録を「登録した関数の数」から
+        # 「実際に toolUse が発生した回数」に変更した(論文B SG-3 の実行時計測)。
+        content_blocks = (
+            result.message.get("content", []) if isinstance(result.message, dict) else []
+        )
         texts: list[str] = []
-        for block in content:
-            if isinstance(block, dict) and "text" in block:
-                texts.append(str(block["text"]))
+        for block in content_blocks:
+            if isinstance(block, dict):
+                if "text" in block:
+                    texts.append(str(block["text"]))
+                if "toolUse" in block:
+                    call_log.record("tools.py", str(block["toolUse"].get("name", "tool")))
         return "\n".join(texts) if texts else str(result)
 
     @staticmethod

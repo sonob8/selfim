@@ -46,7 +46,7 @@
 	```
 
 	- `weight` の合計は1.0にします。総合スコアは重み付き和です
-	- criteria はスイート共通でも、タスクごとに `tasks.yaml` の同フィールドで上書きできます
+	- criteria はスイート共通のみです(タスクごとの上書きには未対応)。タスクごとに採点基準を変えたい場合は、基準を一般化するかスイートを分割してください
 
 4. 実行します。
 
@@ -74,13 +74,19 @@
 
 	`--rounds 0` はベースライン評価のみを実行し、改善はしません。
 
+	認証情報なしでも Bedrock 経路を検証したい場合は、moto ベースの統合テストが利用できます(実strands Agent → BedrockModel → boto3シリアライズまでを実行し、AWS API のみをエミュレート):
+
+	```sh
+	uv run pytest tests/test_bedrock_integration.py -q
+	```
+
 4. 接続を確認できたらループを回します。
 
 	```sh
 	uv run python scripts/run_loop.py --suite my_suite --provider bedrock --rounds 2
 	```
 
-提案品質が足りないときは、Evaluator/Proposer/Selector とタスクエージェントに別モデルを指定できます。`config/settings.yaml` の `models:` セクションで役割ごとに `model_id` を変えてください。
+提案品質が足りないときは、`config/settings.yaml` の `models:` セクションで役割ごとにプロバイダを変えられます(例: ジャッジのみ別プロバイダ)。モデルIDは `.env` の `BEDROCK_MODEL_ID` で全役合共通の1値を指定します(役割ごとのモデルID指定には未対応)。
 
 ## タスクをevolve/held-outに分割し直す
 

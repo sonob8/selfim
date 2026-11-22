@@ -21,10 +21,11 @@ selfim の実装機能カタログ。README(docs/)の各機能に対応する実
 | F13 | タスクエージェント実行+エビデンス | `agent_runner.py` | TP-3 | docs/reference.md「AgentRunner」 |
 | F14 | CLI実行 | `scripts/run_loop.py` | G4実デモ(legal/hr両スイート) | docs/tutorial.md手順 |
 | F15 | サンプルスイート2種 | `data/tasks/legal_judgment/` `hr_evaluation/` | G4実デモ | docs/how-to-swap-tasks.md |
+| F16 | Bedrock実経路テスト(moto) | `tests/bedrock_emulator.py` + `tests/test_bedrock_integration.py` | 6統合テスト | docs/how-to-swap-tasks.md「Bedrockで動かす」 |
 
 ## 検証状況(2026-11-22時点)
 
-- `uv run pytest tests/` → **58 passed**
+- `uv run pytest tests/` → **64 passed**(58ユニット/E2E + 6 Bedrock実経路統合テスト)
 - G4実デモ(バグ修正後の再実行):
   - `demo-legal-003` (legal_judgment, 2ラウンドk=2): evolve 56.00 → 100.00, held-out 56.00 → 100.00, P1採択(fixed=2/2, predicted=evolveタスクのみ)
   - `demo-hr-003` (hr_evaluation, 1ラウンドk=2): evolve 50.00 → 80.00, held-out 50.00 → 80.00, P1採択(fixed=2/2)
@@ -36,6 +37,14 @@ selfim の実装機能カタログ。README(docs/)の各機能に対応する実
 - セレクタ採択IDと昇格コードが別候補を指し得る不整合 → candidate_id で直接引く方式に修正
 - 実行エビデンスが「プロンプト非空」しか見ていなかった → モジュール内容の実文字列照合に強化(設計判断 D-3)
 - token_budget が実行経路で未接続 → settings.yaml/CLI に接続
+
+## 新規コンテキストレビュー(GLM-5.3)で修正済みの項目(2026-11-22)
+
+- Selector.select にSIM全文を渡すように修正(論文A §3.2 の「提案者とセレクタは同じ記録を参照」)
+- bedrock モードで verify.py 実行をCallLogに記録(以前はverify提案が恒久的にゲート拒否される実装だった)
+- tools 呼出記録を「登録数」から「実際のtoolUse」ベースに変更
+- タスク分割の hash() を sha256 に置換(プロセス間決定性)
+- moto + converseエミュレータによるBedrock実経路テストを追加(F16)
 
 ## 既知の制限(README Explanation「残した限界」と対応)
 

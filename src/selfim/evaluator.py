@@ -32,13 +32,35 @@ logger = logging.getLogger(__name__)
 # クラスタリングの最小出現回数。1(単発)は編集対象にしない。
 _MIN_CLUSTER_COUNT = 2
 
-# 不足点のキーワード → 根原因仮説テンプレート(クラスタの診断ドラフト)。
-# MockJudge の missing_points 語彙に対応し、Proposer のSIM照合に使う。
-_ROOT_CAUSE_TEMPLATES: list[tuple[str, str]] = [
-    ("思考ステップ欠落", "required reasoning steps are omitted from the output"),
-    ("事実の引用", "conclusions lack explicit citation of task facts"),
-    ("反対解釈", "counterarguments and fairness considerations are not examined"),
+# 不足点の正規化キーワード → (クラスタ署名用カテゴリ, 根原因仮説)。
+# 実LLMジャッジは同一欠落を毎回違う言い方で書くため、完全一致クラスタでは
+# 署名がほぼ一意に発散する。正規化キーワードでカテゴリへ畳むことで
+# 繰り返し失敗クラスタを形成できる(新規コンテキストレビュー 2026-11-22 で指摘)。
+_NORMALIZATION_RULES: list[tuple[tuple[str, ...], str, str]] = [
+    (("思考ステップ", "ステップ", "推論過程", "reasoning step"), "step-omission",
+     "required reasoning steps are omitted from the output"),
+    (("事実の引用", "引用", "根拠", "citation", "evidence"), "fact-citation",
+     "conclusions lack explicit citation of task facts"),
+    (("反対解釈", "反論", "公平", "counterargument", "fairness"), "counterargument",
+     "counterarguments and fairness considerations are not examined"),
+    (("結論", "conclusion"), "conclusion-quality",
+     "conclusions are missing or not derived logically"),
 ]
+
+
+def _normalize_missing_point(point: str) -> str:
+    """不足点テキストをクラスタ署名用のカテゴリに正規化する。
+
+    Args:
+        point: ジャッジが列挙した不足点の自由文。
+
+    Returns:
+        正規化カテゴリ(未マッチは先頭40文字のトリム)。
+    """
+    for keywords, category, _ in _NORMALIZATION_RULES:
+        if any(k.lower() in point.lower() for k in keywords):
+            return category
+    return point.strip()[:40]
 
 
 class Evaluator:
@@ -113,8 +135,14 @@ class Evaluator:
         """失敗を不足点の署名でクラスタリングする(論文B §III)。
 
         attribution == "harness" の失敗のみ対象とする(モデル限界は編集対象外)。
-        不足点の集合を署名とし、出現回数が _MIN_CLUSTER_COUNT 未満の
-        署名は除外する(Phantom Guardrails 防止)。
+        署名は不足点を _normalize_missing_point でカテゴリへ正規化した集合とし、
+        出現回数が _MIN_CLUSTER_COUNT 未満の署名は除外する
+        (Phantom Guardrails 防止)。
+
+        [FIX 2026-11-22] 署名を自由文の完全一致から正規化カテゴリの集合へ変更。
+        以前の完全一致では実LLMジャッジの言い揺れで署名が発散し、クラスタが
+        形成されずループが毎ラウンド不採択になる恐れがあった
+        (新規コンテキストレビュー 2026-11-22 で指摘)。
 
         Args:
             feedback: run_suite の返り値。
@@ -128,11 +156,16 @@ class Evaluator:
         for result in feedback.per_task:
             if result.attribution != "harness" or not result.missing_points:
                 continue
-            signature = "|".join(sorted(result.missing_points))
+            signature = "|".join(
+                sorted(_normalize_missing_point(m) for m in result.missing_points)
+            )
             signature_tasks.setdefault(signature, [])
             if result.task_id not in signature_tasks[signature]:
                 signature_tasks[signature].append(result.task_id)
             signature_missing[signature] = list(result.missing_points)
+
+        def _signature_of(missing_points: list[str]) -> str:
+            return "|".join(sorted(_normalize_missing_point(m) for m in missing_points))
 
         clusters: list[FailureCluster] = []
         for signature, task_ids in signature_tasks.items():
@@ -140,7 +173,7 @@ class Evaluator:
                 1
                 for r in feedback.per_task
                 if r.attribution == "harness" and r.missing_points
-                and "|".join(sorted(r.missing_points)) == signature
+                and _signature_of(r.missing_points) == signature
             )
             if occurrences < _MIN_CLUSTER_COUNT:
                 continue
@@ -166,10 +199,10 @@ class Evaluator:
             missing_points: ジャッジが列挙した不足点。
 
         Returns:
-            根原因仮説テキスト(既知テンプレートに一致しない場合は一般形)。
+            根原因仮説テキスト(正規化ルールに一致しない場合は一般形)。
         """
-        joined = " / ".join(missing_points)
-        for keyword, hypothesis in _ROOT_CAUSE_TEMPLATES:
-            if any(keyword in m for m in missing_points):
+        for _keywords, _category, hypothesis in _NORMALIZATION_RULES:
+            if any(any(k.lower() in m.lower() for k in _keywords) for m in missing_points):
                 return hypothesis
+        joined = " / ".join(missing_points)
         return f"recurring output deficiencies: {joined[:120]}"

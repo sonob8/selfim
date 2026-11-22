@@ -273,7 +273,12 @@ class MainLoop:
         record.evaluated = evaluated
 
         # Stage 4: 選択と配備。不採択なら Ht+1 = Ht、SIMは不変。
-        selection = self.selector.select(base_score, evaluated)
+        # [FIX 2026-11-22] セレクタにもSIM全文を渡す(論文A §3.2: 提案者とセレクタは
+        # 同じ記録を参照する)。以前は sim_text="" を渡しており、実LLMセレクタが
+        # 過去の失敗試行を知らないまま採択判断していた(新規コンテキストレビューで指摘)。
+        selection = self.selector.select(
+            base_score, evaluated, sim_text=self.sim_manager.render_for_prompt(sim_record)
+        )
         if selection.accepted_candidate_id is None:
             logger.info("round %d: kept Ht (%s)", round_no, selection.reason)
             return record, sim_record, base_per_task, base_score

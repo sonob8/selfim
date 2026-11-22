@@ -140,3 +140,28 @@ class TestClusterFailures:
             per_task=[EvaluationResult(task_id="t1", score=90.0, missing_points=[])],
         )
         assert evaluator.cluster_failures(feedback) == []
+
+    def test_wording_variations_cluster_together(self, evaluator: Evaluator) -> None:
+        """[FIX 2026-11-22] 実LLMジャッジの言い揺れでも同一クラスタに正規化されること。
+
+        過去バグ: 完全一致署名では言い揺れで署名が発散し、クラスタ不成立 →
+        ループが毎ラウンド不採択になる恐れがあった。
+        """
+        from selfim.schemas import EvaluationResult, SuiteFeedback
+
+        feedback = SuiteFeedback(
+            label="evolve",
+            per_task=[
+                # 同じ「思考ステップ欠落」を3通りに言い換えたケース
+                EvaluationResult(task_id="t1", score=40.0,
+                                 missing_points=["途中の思考ステップが示されていない"], attribution="harness"),
+                EvaluationResult(task_id="t2", score=45.0,
+                                 missing_points=["推論過程の各ステップが欠落している"], attribution="harness"),
+                EvaluationResult(task_id="t3", score=50.0,
+                                 missing_points=["reasoning steps が明示されていない"], attribution="harness"),
+            ],
+        )
+        clusters = evaluator.cluster_failures(feedback)
+        assert len(clusters) == 1  # 3つの言い換えが同一カテゴリに正規化される
+        assert clusters[0].count == 3
+        assert "reasoning steps" in clusters[0].root_cause_hypothesis

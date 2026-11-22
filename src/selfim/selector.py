@@ -115,7 +115,10 @@ class Selector:
         return None
 
     def select(
-        self, base_score: float, evaluated: list[CandidateEvaluation]
+        self,
+        base_score: float,
+        evaluated: list[CandidateEvaluation],
+        sim_text: str = "",
     ) -> SelectionResult:
         """評価済み候補から採択を判断する。
 
@@ -126,6 +129,9 @@ class Selector:
         Args:
             base_score: 現行ハーネスのevolveスコア。
             evaluated: 検証ゲートと再評価を経た候補。
+            sim_text: SIM全文(render_for_prompt の出力)。論文A §3.2 に従い
+                セレクタもSIM全文を参照して採択判断する(D.2-8 の
+                「似た設定ではタスク固有エビデンスを重視」判断に必要)。
 
         Returns:
             SelectionResult(採択IDまたは None = 全不採択)。
@@ -146,7 +152,7 @@ class Selector:
                 }
                 for c in passed
             ],
-            sim_text="",
+            sim_text=sim_text,
         )
         valid_ids = {c.candidate_id for c in passed}
         if advisory.accepted_candidate_id not in valid_ids:
