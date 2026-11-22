@@ -48,6 +48,8 @@ class ValidationGate:
         candidate_score: float,
         base_score: float,
         candidate_tokens: int = 0,
+        build_ok: bool | None = None,
+        smoke_ok: bool | None = None,
     ) -> GateResult:
         """候補の受け入れ判定を行う。
 
@@ -61,6 +63,11 @@ class ValidationGate:
             candidate_score: 候補ハーネスの evolve 再評価スコア。
             base_score: 現行ハーネスの evolve ベースラインスコア。
             candidate_tokens: 候補実行時の最大タスクトークン(AgentOutput.tokens の最大値)。
+            build_ok: docker実行系のイメージビルド成否(None=local実行で判定対象外)。
+                [DECISION 2026-11-22] 論文B SG-3 の実行時版: dockerfile/requirements/
+                entrypoint の構文・import 相当はビルド成功で検証する。
+            smoke_ok: docker実行系のスモークテスト成否(/ping + 有効なenvelope応答)。
+                新コードパスが実際に実行されたことの実行時確認(SG-3)。
 
         Returns:
             GateResult(passed と拒否理由のリスト)。
@@ -68,11 +75,20 @@ class ValidationGate:
         reasons: list[str] = []
 
         # 条件1: Pythonモジュールの構文確認
-        if proposal.target_module in ("tool", "verify"):
+        # [DECISION 2026-11-22] entrypoint もPythonコードのため構文確認対象に追加。
+        if proposal.target_module in ("tool", "verify", "entrypoint"):
             try:
                 compile(proposal.new_content, f"<candidate:{proposal.target_module}>", "exec")
             except SyntaxError as exc:
                 reasons.append(f"構文エラー: {exc}")
+
+        # 条件1b: docker実行系のビルド成否(足場モジュールの構文/import相当の検証)
+        if build_ok is False:
+            reasons.append("docker build 失敗: イメージを構築できなかった(構文/import/依存エラー)")
+
+        # 条件1c: docker実行系のスモークテスト成否(新コードパス実行の実行時確認)
+        if smoke_ok is False:
+            reasons.append("コンテナのスモークテスト失敗: /ping または /invocations が有効応答を返さなかった")
 
         # 条件2: 実行エビデンス(モジュール種別ごと、設計判断 D-3)
         if proposal.target_module in ("system_prompt", "skill"):
