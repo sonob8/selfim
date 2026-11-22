@@ -2,8 +2,9 @@
 
 使い方:
     uv run python scripts/run_loop.py --suite legal_judgment --provider mock --rounds 2 --candidates 2
+    uv run python scripts/run_loop.py --suite legal_judgment --provider mock --executor docker --rounds 2
 
-プロジェクトルートで実行すること(docs/tutorial.md 参照)。
+プロジェクトルートで実行すること(docs/tutorial.md, docs/docker.md 参照)。
 """
 
 from __future__ import annotations
@@ -50,6 +51,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="mock | bedrock(未指定は .env の SELFIM_MODEL_PROVIDER、さらに未設定なら mock)",
     )
+    parser.add_argument(
+        "--executor",
+        default=None,
+        help="local | docker(未指定は settings.yaml の executor、さらに環境変数 SELFIM_EXECUTOR)。",
+    )
     parser.add_argument("--rounds", type=int, default=None, help="改善ラウンド数")
     parser.add_argument("--candidates", type=int, default=None, help="1ラウンドの候補数")
     parser.add_argument("--run-id", default=None, help="run識別子(未指定はタイムスタンプ)")
@@ -68,6 +74,8 @@ def main() -> int:
     args = parse_args()
     settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
     provider = args.provider or os.environ.get("SELFIM_MODEL_PROVIDER", "mock")
+    # [DECISION 2026-11-22] 実行系の解決優先順位: CLI引数 > 環境変数 SELFIM_EXECUTOR > settings.yaml
+    executor = args.executor or os.environ.get("SELFIM_EXECUTOR") or settings.executor
     n_rounds = args.rounds if args.rounds is not None else settings.n_rounds
     k_candidates = args.candidates if args.candidates is not None else settings.k_candidates
     run_id = args.run_id or f"{args.suite}-{provider}-{datetime.now():%Y%m%d-%H%M%S}"
@@ -77,8 +85,8 @@ def main() -> int:
     suite_dir = PROJECT_ROOT / "data" / "tasks" / args.suite
     tasks, rubric = load_suite(suite_dir)
     evolve, held_out = load_splits(suite_dir, tasks, run_id)
-    logger.info("suite=%s tasks=%d evolve=%d held_out=%d provider=%s",
-                args.suite, len(tasks), len(evolve), len(held_out), provider)
+    logger.info("suite=%s tasks=%d evolve=%d held_out=%d provider=%s executor=%s",
+                args.suite, len(tasks), len(evolve), len(held_out), provider, executor)
 
     # 役割ごとにモデルを組み立て(設計判断 D-4)
     def _model(role: str) -> object:
@@ -86,11 +94,36 @@ def main() -> int:
         return build_model(role, p, model_id=os.environ.get("BEDROCK_MODEL_ID", ""),
                            region=os.environ.get("BEDROCK_REGION", "us-west-2"))
 
+    # [DECISION 2026-11-22] docker実行系ではタスクモデルはコンテナ内で動くため
+    # ホスト側に組まない(judge/proposer/selector は従来どおりホスト側)。
+    task_model = _model("task") if executor == "local" else None
+
+    runner_factory = None
+    if executor == "docker":
+        from selfim.docker_executor import DockerAgentRunner
+
+        def runner_factory(harness_dir: Path) -> DockerAgentRunner:  # type: ignore[misc]
+            """ハーネスディレクトリから docker 実行器を組む(MainLoop のシームへ注入)。"""
+            label = "base" if harness_dir.name == "harness" else harness_dir.name
+            return DockerAgentRunner(
+                harness_dir=harness_dir,
+                model_provider=provider,
+                run_id=run_id,
+                candidate_label=label,
+                settings=settings.docker,
+                logs_dir=run_dir / "logs",
+            )
+
     sim_manager = SIMManager(path=run_dir / "sim.json")
     loop = MainLoop(
         evaluator=Evaluator(model=_model("judge")),
         proposer=Proposer(model=_model("proposer"), sim_manager=sim_manager),
-        selector=Selector(model=_model("selector"), diff_line_budget=settings.diff_line_budget),
+        # Selector は足場モジュール編集の可否を実行系で判断する(規則6)
+        selector=Selector(
+            model=_model("selector"),
+            diff_line_budget=settings.diff_line_budget,
+            executor=executor,
+        ),
         sim_manager=sim_manager,
         module_registry=ModuleRegistry(
             seed_dir=PROJECT_ROOT / "src" / "selfim" / "harness",
@@ -99,11 +132,12 @@ def main() -> int:
         gate=ValidationGate(
             diff_line_budget=settings.diff_line_budget, token_budget=settings.token_budget
         ),
-        task_model=_model("task"),
+        task_model=task_model,
         rubric=rubric,
         run_dir=run_dir,
         rollouts_per_task=settings.rollouts_per_task,
         suite_name=args.suite,
+        runner_factory=runner_factory,
     )
 
     report: RunReport = loop.run(

@@ -36,6 +36,8 @@ class RecordingRunner:
         self.harness_dir = harness_dir
         self.inner = AgentRunner(harness_dir=harness_dir, model=model)
         self.closed = False
+        self.build_ok = True
+        self.smoke_ok = True
         RecordingRunner.created.append(self)
 
     def run_task(self, task):  # noqa: ANN001 - TaskSpec(テストでは実型不要)
@@ -46,6 +48,14 @@ class RecordingRunner:
 
     def close(self) -> None:
         self.closed = True
+
+
+class BuildFailingRunner(RecordingRunner):
+    """build_ok=False を報告するスタブ(dockerビルド失敗の代替)。"""
+
+    def __init__(self, harness_dir: Path, model: object) -> None:
+        super().__init__(harness_dir, model)
+        self.build_ok = False
 
 
 @pytest.fixture()
@@ -107,6 +117,40 @@ class TestRunnerFactorySeam:
         assert all(r.closed for r in RecordingRunner.created)
         # 候補ディレクトリに対する実行器が少なくとも1つあること
         assert any("candidates" in str(r.harness_dir) for r in RecordingRunner.created)
+
+    def test_build_failing_runner_rejects_candidates_via_gate(
+        self, suite, tmp_path: Path
+    ) -> None:
+        """runnerの build_ok=False がゲートへ伝わり全候補が拒否されること(docker統合)。"""
+        tasks, rubric = suite
+        task_model = build_model("task", "mock")
+        run_dir = tmp_path / "runs" / "run-buildfail"
+        sim_manager = SIMManager(path=run_dir / "sim.json")
+
+        loop = MainLoop(
+            evaluator=Evaluator(model=build_model("judge", "mock")),
+            proposer=Proposer(model=build_model("proposer", "mock"), sim_manager=sim_manager),
+            selector=Selector(model=build_model("selector", "mock"), diff_line_budget=60),
+            sim_manager=sim_manager,
+            module_registry=ModuleRegistry(seed_dir=SEED_HARNESS, workspace_dir=run_dir / "harness"),
+            gate=ValidationGate(diff_line_budget=60),
+            task_model=task_model,
+            rubric=rubric,
+            run_dir=run_dir,
+            rollouts_per_task=1,
+            runner_factory=lambda d: BuildFailingRunner(harness_dir=d, model=task_model),
+        )
+        report = loop.run(
+            tasks=tasks, splits=(tasks[:2], tasks[2:]), n_rounds=1, k_candidates=2
+        )
+        # 全候補がビルド失敗で拒否され、不採択ラウンドになること
+        round_record = report.rounds[0]
+        assert round_record.accepted_candidate_id is None
+        assert any(
+            "build" in reason
+            for ce in round_record.evaluated
+            for reason in ce.gate.reasons
+        )
 
 
 class TestAgentOutputExtension:

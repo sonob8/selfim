@@ -263,6 +263,11 @@ class MainLoop:
                     candidate_score=cand_feedback.score,
                     base_score=base_score,
                     candidate_tokens=sample_out.tokens if sample_out is not None else 0,
+                    # [DECISION 2026-11-22] docker実行系のビルド・スモーク成否を
+                    # 実行器から取得してゲートへ渡す(local実行系は属性を持たない
+                    # ため True 既定。getattr で両実行系を透過的に扱う)。
+                    build_ok=getattr(candidate_runner, "build_ok", True),
+                    smoke_ok=getattr(candidate_runner, "smoke_ok", True),
                 )
             finally:
                 candidate_runner.close()
