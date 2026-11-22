@@ -293,6 +293,16 @@ class TestDockerAgentRunner:
         assert call["environment"] == {"SELFIM_MODEL_PROVIDER": "mock"}
         runner.close()
 
+    def test_build_timeout_from_settings_is_used(self, tmp_path: Path) -> None:
+        """DockerSettings.build_timeout_sec が docker build へ伝わること(死んだ設定にしない)。"""
+        runner, client = _runner(tmp_path)
+        runner.run_task(_task())
+
+        build_call = client.images.build_calls[0]
+        assert build_call["timeout"] == 300  # DockerSettings 既定値
+        assert build_call["dockerfile"] == "scaffold/Dockerfile"
+        runner.close()
+
     def test_bedrock_env_passes_aws_keys_only(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

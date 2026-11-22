@@ -72,6 +72,7 @@ class Shipper:
         executor: str,
         model_provider: str,
         args: dict[str, Any] | None = None,
+        build_timeout_sec: int = 300,
     ) -> ShipManifest | None:
         """最終イメージをビルドし、出荷成果物を書き出す。
 
@@ -83,6 +84,7 @@ class Shipper:
             executor: 実行系名(local / docker)。
             model_provider: タスクモデルプロバイダ。
             args: 実行時引数(スイート名・ラウンド数等、ship.json に記録する)。
+            build_timeout_sec: 最終イメージのビルドタイムアウト秒。
 
         Returns:
             書き出した ShipManifest。ビルド失敗時は None(例外を投げない:
@@ -93,7 +95,11 @@ class Shipper:
         try:
             # Dockerfile は scaffold/Dockerfile にあるため dockerfile 相対パスを明示する
             client.images.build(
-                path=str(harness_dir), tag=tag, rm=True, dockerfile=MODULE_PATHS["dockerfile"]
+                path=str(harness_dir),
+                tag=tag,
+                rm=True,
+                dockerfile=MODULE_PATHS["dockerfile"],
+                timeout=build_timeout_sec,
             )
         except Exception as exc:  # noqa: BLE001 - 出荷失敗は警告に留める
             logger.error("最終イメージのビルドに失敗しました: %s: %s", tag, exc)

@@ -102,7 +102,9 @@ class ContainerSession:
             invocation_timeout_sec: 1invocation のタイムアウト秒。
             logs_dir: コンテナログの保存先(None なら保存しない)。
             keep: true はコンテナを削除しない(デバッグ用)。
-            network_disabled: true はネットワーク無効で起動(mock用)。
+            network_disabled: ネットワーク無効化フラグ。※通常は False のまま使うこと
+                (True にするとポート公開が機能せずホストから /invocations に届かない。
+                検証済み 2026-11-22。詳細は docs/docker.md の残存リスク記載)。
             transport: HTTP POST の実装(テストで差し替え)。
             ping: /ping ヘルスチェックの実装(テストで差し替え)。
         """

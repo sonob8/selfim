@@ -54,9 +54,11 @@ system promptにはSIM全文と、論文A D.2の8原則が埋め込まれます�
 
 ## MainLoop (`main_loop.py`)
 
+改善ループ全体を制御します。コンストラクタは `runner_factory: Callable[[Path], TaskRunner] | None` を受け付けます(None なら local 実行系の AgentRunner をその場で組み立てます。docker実行時は DockerAgentRunner を組むファクトリを渡します)。
+
 ループ全体の制御を担います。
 
-- `MainLoop(evaluator, proposer, selector, sim_manager, module_registry, gate, task_model, rubric, run_dir, rollouts_per_task, suite_name="")` — 全コンポーネントを束縛します
+- `MainLoop(evaluator, proposer, selector, sim_manager, module_registry, gate, task_model, rubric, run_dir, rollouts_per_task, suite_name="", runner_factory=None)` — 全コンポーネントを束縛します
 - `.run(tasks, splits, n_rounds, k_candidates) -> RunReport` — ラウンドを `n_rounds` 回繰り返します。各ラウンドは「評価 → 提案 → スクリーニング(manifest記録) → 適用 → 検証ゲート → 再評価 → 採択判断 → SIM更新」の順です
 - held-outセットの評価は `.run()` 内の開始時(before)と終了時(after)にのみ実行され、ループ内の候補・予測・クラスタには渡りません
 
@@ -66,24 +68,28 @@ system promptにはSIM全文と、論文A D.2の8原則が埋め込まれます�
 
 - `ModuleRegistry(seed_dir, workspace_dir)` — シード(`src/selfim/harness/`)とrunワークスペースを束縛します
 - `.snapshot() -> None` — シードをrunワークスペースへ複製します。シードは以降書き換わりません(ワークスペースが既にあればスキップ = 継続実行)
-- `.module_names() -> list[ModuleName]` — 4モジュール(`system_prompt` / `skill` / `tool` / `verify`)の名前を返します
+- `.module_names() -> list[ModuleName]` — 7モジュール(`system_prompt` / `skill` / `tool` / `verify` / `entrypoint` / `dockerfile` / `requirements`)の名前を返します
 - `.read_module(name, base_dir=None) -> str` — モジュール内容を返します(既定は現行ワークスペース)
+- `read_all_modules(base_dir) -> dict[str, str]` — 7モジュール全てを sources 辞書(レガシーキー名を含む)として読み込みます
 - `.apply_candidate(proposal, candidate_id) -> Path` — 候補を `candidates/<candidate_id>/` 配下に隔離適用し、候補ハーネスのパスを返します。現行ハーネスには直接書き込みません
-- `.promote(candidate_dir) -> None` — 採択候補を現行ワークスペースへ昇格します
+- `.promote(candidate_dir) -> None` — 採択候補を現行ワークスペースへ昇格します(`modules/` + `scaffold/` + `runtime/`。ワークスペースは常にビルド可能な完全なコンテキストです)
 - `.diff(name, candidate_dir) -> str` — 現行ハーネスとのunified diffを返します
 - `.diff_line_count(name, candidate_dir) -> int` — diffの追加・削除行数を返します(予算判定用)
+- `MODULE_PATHS` / `MODULE_CATALOG` — 7モジュールのパスマップと、Proposerプロンプトに埋め込む目録(パス・論文Bコンポーネント・編集ガイド)
 
 ## ValidationGate (`validation_gate.py`)
 
-採択前の受け入れチェックを担います。4条件すべてを満たさない候補は拒否されます。
+採択前の受け入れチェックを担います。全条件を満たさない候補は拒否されます。
 
 - `ValidationGate(diff_line_budget, token_budget=None)` — 予算を束縛します
-- `.check(proposal, diff_lines, evidence, candidate_score, base_score, candidate_tokens=0) -> GateResult` — 次を検査します:
-	1. Pythonモジュール(tool/verify)の `compile()` が成功すること
-	2. 実行エビデンスがあること(system_prompt/skill はプロンプト組込、tool/verify は import成功 + tool呼出1件以上)
-	3. evolveスコアがベースライン以上であること(非退行)
-	4. diff行数が `diff_line_budget` 以内であること
-	5. `token_budget` 設定時は実行トークンが上限以内であること
+- `.check(proposal, diff_lines, evidence, candidate_score, base_score, candidate_tokens=0, build_ok=None, smoke_ok=None) -> GateResult` — 次を検査します:
+	1. Pythonモジュール(tool/verify/entrypoint)の `compile()` が成功すること
+	2. docker実行系のビルド成否(`build_ok=False` は拒否。足場モジュールの構文/import相当の検証)
+	3. docker実行系のスモーク成否(`smoke_ok=False` は拒否。新コードパス実行の実行時確認)
+	4. 実行エビデンスがあること(system_prompt/skill はプロンプト組込、tool/verify は import成功 + tool呼出1件以上、足場はビルド+スモーク)
+	5. evolveスコアがベースライン以上であること(非退行)
+	6. diff行数が `diff_line_budget` 以内であること
+	7. `token_budget` 設定時は実行トークンが上限以内であること
 
 `GateResult` は `passed: bool` と `reasons: list[str]`(拒否理由)を持ちます。
 

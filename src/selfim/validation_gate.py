@@ -1,10 +1,13 @@
 """ValidationGate — 採択前の受け入れチェック(論文B Safe Guard 3、Eq.(1) の G_val)。
 
-4条件すべてを満たさない候補は拒否する:
-1. Pythonモジュールの構文確認(compile + import相当)
-2. 候補が実タスクで実行されたことのエビデンス(設計判断 D-3: 種別エビデンス)
-3. 非退行(candidate_score >= base_score)
-4. diff行数予算内(Safe Guard 2: 編集は小さく)
+全条件を満たさない候補は拒否する:
+1. Pythonモジュールの構文確認(tool/verify/entrypoint。compile + import相当)
+2. docker実行系のビルド成否(足場モジュールの構文/import相当、SG-3 の実行時版)
+3. docker実行系のスモーク成否(新コードパス実行の実行時確認、SG-3)
+4. 候補が実タスクで実行されたことのエビデンス(設計判断 D-3: 種別エビデンス)
+5. 非退行(candidate_score >= base_score)
+6. diff行数予算内(Safe Guard 2: 編集は小さく)
+7. トークン予算内(Eq.(1) の B_tok。上限設定時のみ)
 
 違反は1件で打ち切らず全理由を列挙する(デバッグ性のため)。
 """

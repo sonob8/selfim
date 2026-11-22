@@ -177,6 +177,7 @@ def main() -> int:
                 executor=executor,
                 model_provider=provider,
                 args={"suite": args.suite, "rounds": n_rounds, "candidates": k_candidates},
+                build_timeout_sec=settings.docker.build_timeout_sec,
             )
             if manifest is None:
                 logger.warning("[ship] 最終イメージのビルドに失敗しました(成果物は report.json のみ)")

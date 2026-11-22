@@ -174,7 +174,7 @@ class ModuleRegistry:
         """モジュールの現在内容を返す。
 
         Args:
-            name: モジュール名(system_prompt/skill/tool/verify)。
+            name: モジュール名(7モジュールのいずれか)。
             base_dir: 読み込み基点(既定はワークスペース)。
 
         Returns:

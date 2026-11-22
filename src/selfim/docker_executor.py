@@ -167,8 +167,15 @@ class DockerAgentRunner:
         if self._build is not None:
             return
         builder = ImageBuilder(client=self._client)
-        self._build = builder.build(self.harness_dir, self.image_tag)
+        self._build = builder.build(
+            self.harness_dir, self.image_tag, timeout_sec=self.settings.build_timeout_sec
+        )
         if not self._build.ok:
+            # [FIX 2026-11-22] ビルド失敗時はスモークも未実施なので _smoke_ok=False。
+            # 放置すると smoke_ok=True・tool_calls=1 という虚偽のエビデンス値が
+            # ゲートへ渡る(最終レビュー2026-11-22で指摘。build_ok=False で必ず
+            # 拒否されるため実害はないが、エビデンスの正確性を保つ)。
+            self._smoke_ok = False
             return  # ビルド失敗:コンテナは起動しない(ゲートで拒否される)
         session_kwargs: dict[str, Any] = {
             "container_port": self.settings.container_port,

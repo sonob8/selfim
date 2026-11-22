@@ -12,7 +12,7 @@ rollouts_per_task: 3
 diff_line_budget: 60
 # 1タスクあたりの実行トークン上限(論文B Eq.(1) の B_tok)。null は上限なし
 token_budget: null
-# docker実行系の設定(executor: docker 时のみ使用)
+# docker実行系の設定(executor: docker のときのみ使用)
 docker:
   container_port: 8080       # コンテナ内ポート(AgentCore Runtime 規定)
   ping_timeout_sec: 60       # 起動待ち(/ping)の上限秒
