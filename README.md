@@ -171,8 +171,13 @@ data/tasks/           タスクスイート+ルーブリック(差し替え可�
 - 改善オプティマイザ自身(Proposer/Selector)のコード改善は対象外
 - コンテナ内の Bedrock 経路は実クレデンシャルが必要なため自動テスト対象外
   (mockプロバイダでロジックを網羅。詳細は [docs/docker.md](docs/docker.md))
-- `papers/`(本リポジトリの設計根拠とした論文)は著作権の関係で公開リポジトリには
-  含めていません。ローカルで `papers/` にPDFを置けば `CLAUDE.md` の要約と突き合わせできます
+
+## 参考文献
+
+設計の根拠とした2論文のPDFを `papers/` に同梱しています(要約は `CLAUDE.md` を参照)。
+
+- `papers/google_selfimrrovement_agent.pdf` — *Self-Improvement Memory Enables Continual Recursive Self-Improvement*(SIM/CRSI)
+- `papers/Harnesses That Improve Themselves.pdf` — *Harnesses That Improve Themselves: A Unifying Framework for Self-Improving Agent Harnesses*
 
 ## ライセンス
 
