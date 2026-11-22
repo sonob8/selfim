@@ -161,6 +161,27 @@ def main() -> int:
         "[done] held-out before=%.2f after=%.2f",
         report.held_out_before, report.held_out_after,
     )
+
+    # 出荷ステップ: 勝者ハーネスの最終イメージ化(docker実行系のみ、設定で無効化可)
+    # [DECISION 2026-11-22] 出荷 = ローカルイメージ + docker save tar + ship.json。
+    # local実行系では足場の検証がないため出荷しない(警告のみ)。
+    if settings.ship.enabled:
+        if executor == "docker":
+            from selfim.shipper import Shipper
+
+            manifest = Shipper().ship(
+                harness_dir=run_dir / "harness",
+                report=report,
+                sim_record=sim_manager.load(),
+                run_id=run_id,
+                executor=executor,
+                model_provider=provider,
+                args={"suite": args.suite, "rounds": n_rounds, "candidates": k_candidates},
+            )
+            if manifest is None:
+                logger.warning("[ship] 最終イメージのビルドに失敗しました(成果物は report.json のみ)")
+        else:
+            logger.info("[ship] local実行系のためイメージ出荷をスキップしました")
     return 0
 
 
