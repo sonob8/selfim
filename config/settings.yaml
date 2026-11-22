@@ -1,4 +1,7 @@
 # selfim ループ設定
+# 実行系(local = in-process高速 / docker = AgentCore互換コンテナ実行。
+# CLI --executor と環境変数 SELFIM_EXECUTOR がこの値より優先される)
+executor: local
 # 改善ラウンド数(論文A §4.1 は N=10、デモ用に既定は小さくしている)
 n_rounds: 3
 # 1ラウンドの候補提案数(論文A §4.1 は k=5)
@@ -9,6 +12,19 @@ rollouts_per_task: 3
 diff_line_budget: 60
 # 1タスクあたりの実行トークン上限(論文B Eq.(1) の B_tok)。null は上限なし
 token_budget: null
+# docker実行系の設定(executor: docker 时のみ使用)
+docker:
+  container_port: 8080       # コンテナ内ポート(AgentCore Runtime 規定)
+  ping_timeout_sec: 60       # 起動待ち(/ping)の上限秒
+  ping_interval_sec: 0.5     # /ping ポーリング間隔秒
+  invocation_timeout_sec: 120  # 1回の /invocations タイムアウト秒
+  build_timeout_sec: 300     # docker build タイムアウト秒
+  keep_containers: false     # true はコンテナを残す(デバッグ用)
+  # 注意: network none はポート公開と両立しないため、コンテナは通常ブリッジで起動する
+  # (実行時の外向き通信は残存リスク → docs/docker.md 参照)
+# 出荷ステップ(ループ完了後の docker save + ship.json)
+ship:
+  enabled: true
 # モデル割り当て(役割ごとにプロバイダ/モデルを変えられる)
 models:
   task:

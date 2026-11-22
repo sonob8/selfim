@@ -11,7 +11,8 @@
 - 評価データ・ルーブリックはイメージに焼き込まず data/ をマウントもしない
   (タスク1件分のペイロードのみ実行時に /invocations へ渡る。ルーブリック・
   全タスク一覧は渡らない)。
-- mock プロバイダ時は network_disabled で起動する(外部通信不要=持ち出し経路の遮断)。
+- 公開ポートはループバック(127.0.0.1)に限定する。実行時の外向き通信は
+  完全遮断できず残存リスク(docs/docker.md 参照。ビルド時コマンドはSelectorが拒否)。
 
 [DECISION 2026-11-22] ループプロセスは候補コードを実行しない。tools/verify の
 exec はコンテナ内(runtime/)で行われるため、この実行系はHTTP通信のみを行う。
@@ -81,6 +82,9 @@ class ImageBuilder:
     def build(self, context_dir: Path, tag: str, timeout_sec: int = 300) -> BuildResult:
         """ビルドコンテキストからイメージをビルドする。
 
+        Dockerfile はコンテキスト直下でなく MODULE_PATHS["dockerfile"]
+        (scaffold/Dockerfile)にあるため、dockerfile 相対パスを明示する。
+
         Args:
             context_dir: ビルドコンテキスト(候補ハーネスディレクトリ)。
             tag: イメージタグ(selfim-<run_id>-<label>)。
@@ -89,8 +93,16 @@ class ImageBuilder:
         Returns:
             BuildResult(失敗時も例外を投げず ok=False で返す)。
         """
+        from selfim.module_registry import MODULE_PATHS
+
         try:
-            self.client.images.build(path=str(context_dir), tag=tag, rm=True, timeout=timeout_sec)
+            self.client.images.build(
+                path=str(context_dir),
+                tag=tag,
+                rm=True,
+                timeout=timeout_sec,
+                dockerfile=MODULE_PATHS["dockerfile"],
+            )
             logger.info("image built: %s (context=%s)", tag, context_dir)
             return BuildResult(ok=True, tag=tag)
         except Exception as exc:  # noqa: BLE001 - ビルド失敗は候補却下で処理する
@@ -175,9 +187,11 @@ class DockerAgentRunner:
             image_tag=self.image_tag,
             name=self.container_name,
             env=self._container_env(),
-            network_disabled=(
-                self.model_provider == "mock" and self.settings.network_disabled_mock
-            ),
+            # [DECISION 2026-11-22] network_disabled は使わない。
+            # --network none / internal はポート公開と両立せず(検証済み)、
+            # ホストからの /invocations が届かなくなるため。実行時の外向き通信は
+            # 残存リスクとして docs/docker.md に記載し、ビルド時のコマンドは
+            # Selector の規則4で拒否する。
             **session_kwargs,
         )
         try:

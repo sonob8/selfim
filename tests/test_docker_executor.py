@@ -171,7 +171,12 @@ class TestContainerSession:
         assert client.containers.container.removed is True
         assert (tmp_path / "selfim-run1-s1-c.log").exists()
 
-    def test_run_uses_network_disabled_for_mock(self, tmp_path: Path) -> None:
+    def test_run_publishes_port_on_loopback_only(self, tmp_path: Path) -> None:
+        """ポート公開はエフェメラル+ループバック限定(ネットワーク無効化は併用しない)。
+
+        [DECISION 2026-11-22] --network none / internal はポート公開と両立しない
+        (検証済み)ため、network_disabled は False のまま運用する。
+        """
         from selfim.container_session import ContainerSession
 
         client = FakeDockerClient()
@@ -186,14 +191,12 @@ class TestContainerSession:
             ping_interval_sec=0.01,
             invocation_timeout_sec=5,
             logs_dir=tmp_path,
-            network_disabled=True,
             transport=lambda u, b, t: (200, json.dumps(_ok_envelope()).encode()),
             ping=lambda u, t: True,
         )
         with session:
             pass
         call = client.containers.run_calls[0]
-        assert call["network_disabled"] is True
         # ホストポートはdockerに任せ、公開先はループバックに限定する
         assert call["ports"] == {"8080/tcp": ("127.0.0.1", None)}
 
@@ -281,14 +284,13 @@ class TestDockerAgentRunner:
         assert ev_tool.tool_calls == 1  # envelope の call_log から復元
         runner.close()
 
-    def test_mock_env_is_minimal_and_network_disabled(self, tmp_path: Path) -> None:
-        """mock時のコンテナenvは SELFIM_MODEL_PROVIDER のみで network_disabled で起動。"""
+    def test_mock_env_is_minimal(self, tmp_path: Path) -> None:
+        """mock時のコンテナenvは SELFIM_MODEL_PROVIDER のみ(最小権限)。"""
         runner, client = _runner(tmp_path)
         runner.run_task(_task())
 
         call = client.containers.run_calls[0]
         assert call["environment"] == {"SELFIM_MODEL_PROVIDER": "mock"}
-        assert call["network_disabled"] is True
         runner.close()
 
     def test_bedrock_env_passes_aws_keys_only(
@@ -325,7 +327,6 @@ class TestDockerAgentRunner:
         assert env["BEDROCK_REGION"] == "us-west-2"
         assert env["BEDROCK_MODEL_ID"] == "anthropic.test"
         assert "SOME_UNRELATED_SECRET" not in env  # 無関係な秘密は渡さない
-        assert client.containers.run_calls[0]["network_disabled"] is False
         runner.close()
 
     def test_transport_connection_error_returns_error_output(
@@ -451,5 +452,4 @@ class TestConfigExtension:
         assert settings.executor == "local"
         assert settings.docker.container_port == 8080
         assert settings.docker.ping_timeout_sec == 60.0
-        assert settings.docker.network_disabled_mock is True
         assert settings.ship.enabled is True

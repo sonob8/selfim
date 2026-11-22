@@ -35,7 +35,11 @@ class DockerSettings:
         invocation_timeout_sec: 1回の /invocations のタイムアウト秒。
         build_timeout_sec: docker build のタイムアウト秒。
         keep_containers: true はコンテナを削除せず残す(デバッグ用)。
-        network_disabled_mock: mockプロバイダ時は net none で起動する(外部不要・安全)。
+
+    注意: --network none / internal ネットワークはポート公開と両立しないため
+    (検証 2026-11-22: どちらもホストからの接続が不能)、コンテナは通常ブリッジで
+    起動する。候補コードの実行時外向き通信は完全には遮断できない残存リスクであり、
+    docs/docker.md に記載する(ビルド時の持ち出しコマンドはSelectorが拒否する)。
     """
 
     container_port: int = 8080
@@ -44,7 +48,6 @@ class DockerSettings:
     invocation_timeout_sec: float = 120.0
     build_timeout_sec: int = 300
     keep_containers: bool = False
-    network_disabled_mock: bool = True
 
 
 @dataclass(frozen=True)
@@ -143,7 +146,6 @@ def load_settings(path: Path) -> Settings:
         invocation_timeout_sec=float(docker_raw.get("invocation_timeout_sec", 120.0)),
         build_timeout_sec=int(docker_raw.get("build_timeout_sec", 300)),
         keep_containers=bool(docker_raw.get("keep_containers", False)),
-        network_disabled_mock=bool(docker_raw.get("network_disabled_mock", True)),
     )
     ship_raw = raw.get("ship", _DEFAULTS["ship"])
 

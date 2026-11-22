@@ -19,3 +19,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "docker: Docker デーモンが必要なテスト(実コンテナ起動を含む)",
+    "docker_e2e: 遅いdocker E2E(イメージビルドを含む全体ループ)",
+]

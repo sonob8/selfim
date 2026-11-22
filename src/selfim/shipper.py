@@ -91,7 +91,10 @@ class Shipper:
         tag = f"selfim-{run_id}-final"
         client = self._ensure_client()
         try:
-            client.images.build(path=str(harness_dir), tag=tag, rm=True)
+            # Dockerfile は scaffold/Dockerfile にあるため dockerfile 相対パスを明示する
+            client.images.build(
+                path=str(harness_dir), tag=tag, rm=True, dockerfile=MODULE_PATHS["dockerfile"]
+            )
         except Exception as exc:  # noqa: BLE001 - 出荷失敗は警告に留める
             logger.error("最終イメージのビルドに失敗しました: %s: %s", tag, exc)
             return None
