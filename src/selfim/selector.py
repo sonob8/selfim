@@ -4,6 +4,10 @@
 - タスク固有ヒント(new_content/what にタスクIDを直書き)の拒否(Safe Guard 2)
 - 行数予算超過の拒否(編集は小さく)
 - SIM上失敗済み方向の無根拠な再提案の拒否(論文A D.2-6)
+- デプロイ境界の安全規則(論文B Table III): 評価データ・論文のイメージ持ち込み、
+  ホストパスマウント、外部持ち出しの拒否
+- local実行系では足場モジュール(entrypoint/dockerfile/requirements)編集の拒否
+  (ビルド・スモーク検証が行えないため、未検証の実行証拠でゲートを通るのを防ぐ)
 
 評価後選択(モデル助言 + 決定的最終判定):
 - ゲート通過候補のみ対象
@@ -13,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from selfim.models import SelectorModel
 from selfim.schemas import (
@@ -29,6 +34,35 @@ logger = logging.getLogger(__name__)
 # 再訪を許可する「新エビデンス」宣言のキーワード(論文A D.2-6)。
 _NEW_EVIDENCE_KEYWORD = "新エビデンス"
 
+# 足場モジュール(検証にdocker実行系が必要なモジュール)。
+_SCAFFOLD_MODULES = ("entrypoint", "dockerfile", "requirements")
+
+# [DECISION 2026-11-22] Dockerfile 編集の禁止パターン(論文B Table III のコード強制)。
+# 評価データ(data/)・論文(papers/)をイメージへ持ち込む COPY/ADD、親ディレクトリ
+# 参照、ホストパスのバインド、外部へのデータ持ち出し疑いのある RUN を拒否する。
+# 構造的な破壊(COPY runtime/ の削除等)は下流の docker build 失敗で検出される。
+_DOCKERFILE_FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(r"(?im)^\s*(COPY|ADD)\s+\S*(data|papers)\b"),
+        "評価データ・論文の COPY/ADD を含む(論文B Table III 違反)",
+    ),
+    (
+        re.compile(r"(?im)^\s*(COPY|ADD)\s+\.\."),
+        "親ディレクトリ参照を含む COPY/ADD(コンテキスト外の持ち込み)",
+    ),
+    (
+        re.compile(r"--mount"),
+        "ホストパスのバインドマウントを含む(論文B Table III 違反)",
+    ),
+    (
+        re.compile(r"(?im)^\s*RUN\s+.*\b(aws\s+s3|curl|wget)\b"),
+        "外部へのデータ持ち出し疑いのある RUN を含む",
+    ),
+]
+
+# entrypoint 契約の存在確認用(固定ランタイムが呼び出す関数シグネチャ)。
+_RUN_TASK_PATTERN = re.compile(r"def\s+run_task\s*\(")
+
 
 class Selector:
     """選択モデルと予算を束縛する。
@@ -38,15 +72,20 @@ class Selector:
         diff_line_budget: スクリーニング段階の行数予算(Gateの最終判定は別)。
     """
 
-    def __init__(self, model: SelectorModel, diff_line_budget: int) -> None:
-        """モデルと予算を束縛する。
+    def __init__(self, model: SelectorModel, diff_line_budget: int, executor: str = "local") -> None:
+        """モデルと予算を実行系名を束縛する。
 
         Args:
             model: build_model("selector", ...) の返り値。
             diff_line_budget: 候補内容の行数上限(スクリーニング用の保守的下限)。
+            executor: 実行系名("local" / "docker")。docker のみ足場モジュール
+                (entrypoint/dockerfile/requirements)の編集を検証できるため、
+                local では足場編集候補をスクリーニング段階で拒否する
+                ([DECISION 2026-11-22] 未検証の実行証拠でゲートを通るのを防ぐ)。
         """
         self.model = model
         self.diff_line_budget = diff_line_budget
+        self.executor = executor
 
     def screen(
         self,
@@ -112,6 +151,28 @@ class Selector:
                         f"失敗済み方向の無根拠な再訪: {problem.id} round {attempt.round} は "
                         f"fixed=[] で未解決(新エビデンスの宣言が必要)"
                     )
+
+        # 規則4: デプロイ境界の安全規則(論文B Table III のコード強制)。
+        if proposal.target_module == "dockerfile":
+            for pattern, reason in _DOCKERFILE_FORBIDDEN:
+                if pattern.search(proposal.new_content):
+                    return f"Dockerfile 安全違反: {reason}"
+
+        # 規則5: entrypoint 契約(固定ランタイムが呼ぶ run_task が存在しないと
+        # 全タスクが失敗する)。深い破壊はスモークテストで検出する。
+        if proposal.target_module == "entrypoint" and not _RUN_TASK_PATTERN.search(
+            proposal.new_content
+        ):
+            return "entrypoint 契約違反: run_task(task: dict) -> dict 関数が存在しない"
+
+        # 規則6: 足場モジュールはdocker実行系でのみ検証できる。
+        # local実行系ではビルド・スモーク相当の証拠が取れないため拒否する
+        # (未検証コードのゲート通過防止、論文B SG-3)。
+        if proposal.target_module in _SCAFFOLD_MODULES and self.executor != "docker":
+            return (
+                f"足場モジュール({proposal.target_module})の編集はdocker実行系でのみ"
+                "検証できる(local実行系ではビルド・スモーク証拠を取得できない)"
+            )
         return None
 
     def select(
