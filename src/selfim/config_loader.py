@@ -25,6 +25,40 @@ class ModelRoleConfig:
 
 
 @dataclass(frozen=True)
+class DockerSettings:
+    """docker実行系の設定([DECISION 2026-11-22] AgentCore互換コンテナ実行の追加)。
+
+    Attributes:
+        container_port: コンテナ内ポート(AgentCore Runtime 規定の 8080)。
+        ping_timeout_sec: 起動待ち(/ping が 200 を返すまで)の上限秒。
+        ping_interval_sec: /ping のポーリング間隔秒。
+        invocation_timeout_sec: 1回の /invocations のタイムアウト秒。
+        build_timeout_sec: docker build のタイムアウト秒。
+        keep_containers: true はコンテナを削除せず残す(デバッグ用)。
+        network_disabled_mock: mockプロバイダ時は net none で起動する(外部不要・安全)。
+    """
+
+    container_port: int = 8080
+    ping_timeout_sec: float = 60.0
+    ping_interval_sec: float = 0.5
+    invocation_timeout_sec: float = 120.0
+    build_timeout_sec: int = 300
+    keep_containers: bool = False
+    network_disabled_mock: bool = True
+
+
+@dataclass(frozen=True)
+class ShipSettings:
+    """出荷ステップの設定。
+
+    Attributes:
+        enabled: ループ完了後のイメージ出荷(docker save + ship.json)を行うか。
+    """
+
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
 class Settings:
     """ループ全体の設定(config/settings.yaml 相当)。
 
@@ -33,6 +67,9 @@ class Settings:
         k_candidates: 1ラウンドの候補数(論文A §4.1 は k=5)。
         rollouts_per_task: 1タスクあたりのrollout数(論文A Appendix B は 5)。
         diff_line_budget: ValidationGate の diff 行数上限。
+        executor: 実行系("local" = in-process高速 / "docker" = AgentCore互換コンテナ)。
+        docker: docker実行系の設定。
+        ship: 出荷ステップの設定。
         models: 役割ごとのモデル設定(task/judge/proposer/selector)。
     """
 
@@ -41,6 +78,9 @@ class Settings:
     rollouts_per_task: int = 3
     diff_line_budget: int = 60
     token_budget: int | None = None
+    executor: str = "local"
+    docker: DockerSettings = field(default_factory=DockerSettings)
+    ship: ShipSettings = field(default_factory=ShipSettings)
     models: dict[str, ModelRoleConfig] = field(default_factory=dict)
 
     def provider_for_role(self, role: str, env_default: str) -> str:
@@ -58,6 +98,9 @@ _DEFAULTS: dict[str, Any] = {
     "rollouts_per_task": 3,
     "diff_line_budget": 60,
     "token_budget": None,
+    "executor": "local",
+    "docker": {},
+    "ship": {"enabled": True},
     "models": {},
 }
 
@@ -81,10 +124,28 @@ def load_settings(path: Path) -> Settings:
     if not isinstance(raw, dict):
         raise ValueError("settings.yaml は辞書形式である必要があります")
 
+    # [FIX 2026-11-22] executor のtypo(doker等)が黙って通過し、意図せずlocal実行に
+    # なるのを防ぐため値を検証する(レビュー2026-11-22指摘)。
+    executor = str(raw.get("executor", _DEFAULTS["executor"]))
+    if executor not in ("local", "docker"):
+        raise ValueError(f"executor は local / docker のいずれかです: {executor!r}")
+
     models_raw = raw.get("models", _DEFAULTS["models"])
     models: dict[str, ModelRoleConfig] = {}
     for role, cfg in models_raw.items():
         models[role] = ModelRoleConfig(provider=(cfg or {}).get("provider"))
+
+    docker_raw = raw.get("docker", _DEFAULTS["docker"])
+    docker_settings = DockerSettings(
+        container_port=int(docker_raw.get("container_port", 8080)),
+        ping_timeout_sec=float(docker_raw.get("ping_timeout_sec", 60.0)),
+        ping_interval_sec=float(docker_raw.get("ping_interval_sec", 0.5)),
+        invocation_timeout_sec=float(docker_raw.get("invocation_timeout_sec", 120.0)),
+        build_timeout_sec=int(docker_raw.get("build_timeout_sec", 300)),
+        keep_containers=bool(docker_raw.get("keep_containers", False)),
+        network_disabled_mock=bool(docker_raw.get("network_disabled_mock", True)),
+    )
+    ship_raw = raw.get("ship", _DEFAULTS["ship"])
 
     raw_token_budget = raw.get("token_budget", _DEFAULTS["token_budget"])
     return Settings(
@@ -93,5 +154,8 @@ def load_settings(path: Path) -> Settings:
         rollouts_per_task=int(raw.get("rollouts_per_task", _DEFAULTS["rollouts_per_task"])),
         diff_line_budget=int(raw.get("diff_line_budget", _DEFAULTS["diff_line_budget"])),
         token_budget=int(raw_token_budget) if raw_token_budget is not None else None,
+        executor=executor,
+        docker=docker_settings,
+        ship=ShipSettings(enabled=bool(ship_raw.get("enabled", True))),
         models=models,
     )
