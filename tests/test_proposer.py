@@ -58,7 +58,10 @@ class TestPropose:
         for p in proposals:
             # 根原因引用 or 新規命名の排他(schemasのバリデータで強制)
             assert (p.cites_problem is None) != (p.new_problem_name is None)
-            assert p.target_module in ("system_prompt", "skill", "tool", "verify")
+            assert p.target_module in (
+                "system_prompt", "skill", "tool", "verify",
+                "entrypoint", "dockerfile", "requirements",
+            )
             assert len(p.predicted) >= 1
 
     def test_cites_existing_sim_problem_when_matched(self, proposer: Proposer, sim_manager) -> None:
@@ -107,3 +110,50 @@ class TestPromptContent:
         ):
             assert principle in system
         assert "既存診断" in system  # D.2-3/-7 の中核語
+
+    def test_prompt_contains_seven_module_catalog(self) -> None:
+        """[DECISION 2026-11-22] 7モジュールの目録(パス・論文B対応・ガイド)が
+        system prompt に含まれること(足場も編集対象になったため)。"""
+        from selfim.models import build_proposer_prompt
+
+        system, _user = build_proposer_prompt(
+            harness_sources=_sources() | {
+                "entrypoint_code": "def run_task(t): ...\n",
+                "dockerfile": "FROM python:3.12-slim\n",
+                "requirements": "strands-agents\n",
+            },
+            clusters=[_cluster()],
+            sim_text="",
+            task_ids=["t1"],
+            k=2,
+        )
+        for name in ("system_prompt", "skill", "tool", "verify", "entrypoint", "dockerfile", "requirements"):
+            assert name in system, f"モジュール {name} がプロンプトにない"
+        # 足場の安全ガイド(Table III 関連)が含まれること
+        assert "data/" in system or "papers/" in system
+        assert "run_task" in system
+        # 現行ハーネス(user側)に足場ソースも載ること
+        _s, user = build_proposer_prompt(
+            harness_sources=_sources() | {"entrypoint_code": "def run_task(t): ...\n"},
+            clusters=[_cluster()],
+            sim_text="",
+            task_ids=["t1"],
+            k=2,
+        )
+        assert "def run_task(t): ..." in user
+
+
+class TestHarnessSourceLoading:
+    def test_load_sources_reads_all_seven_modules(self) -> None:
+        """MainLoop 用のソース読み込みが7モジュール(レジストリ経由)を返すこと。"""
+        from selfim.module_registry import read_all_modules
+
+        seed = Path(__file__).resolve().parents[1] / "src" / "selfim" / "harness"
+        sources = read_all_modules(seed)
+        assert set(sources.keys()) == {
+            "system_prompt", "skill", "tool_code", "verify_code",
+            "entrypoint_code", "dockerfile", "requirements",
+        }
+        assert "def run_task" in sources["entrypoint_code"]
+        assert "FROM python" in sources["dockerfile"]
+        assert "strands-agents" in sources["requirements"]

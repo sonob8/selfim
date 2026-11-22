@@ -460,11 +460,11 @@ def build_proposer_prompt(
 ) -> tuple[str, str]:
     """Proposer用の(system prompt, user prompt)を組み立てる(テスト可能な純関数)。
 
-    system prompt に論文A D.2 の8原則とSIM全文を埋め込む
-    (論文A §3.2: ProposerはSIM全文をsystem promptで受け取る)。
+    system prompt に論文A D.2 の8原則・7モジュール目録(MODULE_CATALOG)・
+    SIM全文を埋め込む(論文A §3.2: ProposerはSIM全文をsystem promptで受け取る)。
 
     Args:
-        harness_sources: モジュール名 → 内容。
+        harness_sources: モジュール名 → 内容(7モジュール分を含む)。
         clusters: 失敗クラスタ。
         sim_text: render_for_prompt の出力。
         task_ids: タスクID一覧。
@@ -473,6 +473,14 @@ def build_proposer_prompt(
     Returns:
         (system_prompt, user_prompt)。
     """
+    from selfim.module_registry import MODULE_CATALOG
+
+    # [DECISION 2026-11-22] 足場(entrypoint/dockerfile/requirements)も編集対象に
+    # なったため、モジュール目録(パス・論文B対応・編集ガイド)を明示する。
+    catalog_lines = "\n".join(
+        f"- {name} ({entry.path}) [{entry.paper_b_component}]: {entry.guidance}"
+        for name, entry in MODULE_CATALOG.items()
+    )
     system = (
         "あなたはハーネス改善の提案者です。SIM(改善履歴)全文を参照し、"
         "以下の原則に従ってください:\n"
@@ -484,7 +492,9 @@ def build_proposer_prompt(
         "6. テスト済みの方向は新エビデンスがある時だけ再訪する\n"
         "7. 既存診断で説明できない失敗は新しい問題エントリとして登録する\n"
         "8. 似た設定ではタスク固有エビデンスを重視し、両方が変われば軽視する\n"
-        "各候補は1モジュールのみ編集し、既存根原因の引用(cites_problem)か"
+        "\n# 編集可能なモジュール(1候補=1モジュール)\n"
+        f"{catalog_lines}\n"
+        "\n各候補は1モジュールのみ編集し、既存根原因の引用(cites_problem)か"
         "新規根原因の命名(new_problem_name)のどちらか一方を必ず含め、"
         "修正される予測タスク(predicted)を必ず挙げてください。\n"
         f"\n# SIM(全文)\n{sim_text}"

@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from selfim.agent_runner import AgentRunner, TaskRunner
 from selfim.evaluator import Evaluator
-from selfim.module_registry import ModuleRegistry
+from selfim.module_registry import ModuleRegistry, read_all_modules
 from selfim.proposer import Proposer
 from selfim.schemas import (
     CandidateEvaluation,
@@ -406,19 +406,13 @@ class MainLoop:
         return fixed, missed, passed, total
 
     def _load_sources(self, harness_dir: Path) -> dict[str, str]:
-        """ハーネスモジュールを読み、Proposer/モデル用のソース辞書を作る。"""
-        modules = harness_dir / "modules"
+        """ハーネスモジュールを読み、Proposer/モデル用のソース辞書を作る。
 
-        def _read(name: str) -> str:
-            p = modules / name
-            return p.read_text(encoding="utf-8") if p.exists() else ""
-
-        return {
-            "system_prompt": _read("system_prompt.txt"),
-            "skill": _read("skill.md"),
-            "tool_code": _read("tools.py"),
-            "verify_code": _read("verify.py"),
-        }
+        [DECISION 2026-11-22] 7モジュール(足場を含む)を読み込むよう変更。
+        MODULE_PATHS と単一の対応付け(module_registry.read_all_modules)で
+        読み込むため、モジュール追加時にここを編集する必要がない。
+        """
+        return read_all_modules(harness_dir)
 
     def _dump_manifest(self, round_no: int, screen: ScreenResult, proposals: list[Proposal]) -> None:
         """スクリーニング結果と予測をmanifestとして評価前に書き出す(論文A D.1)。"""

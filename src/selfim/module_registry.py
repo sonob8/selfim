@@ -104,6 +104,37 @@ MODULE_CATALOG: dict[str, ModuleCatalogEntry] = {
 }
 
 
+# モジュール名 → Proposer/モデルへ渡す sources 辞書のキー名。
+# 前4つは既存(MockTaskModel/StrandsTaskModel)が期待するレガシーキーを維持する。
+# [DECISION 2026-11-22] 足場モジュールのソースも Proposer に渡す。
+_SOURCE_KEYS: dict[str, str] = {
+    "system_prompt": "system_prompt",
+    "skill": "skill",
+    "tool": "tool_code",
+    "verify": "verify_code",
+    "entrypoint": "entrypoint_code",
+    "dockerfile": "dockerfile",
+    "requirements": "requirements",
+}
+
+
+def read_all_modules(base_dir: Path) -> dict[str, str]:
+    """ハーネスディレクトリから7モジュール全てを読み込む。
+
+    Args:
+        base_dir: ハーネスディレクトリ(ワークスペースまたは候補ディレクトリ)。
+
+    Returns:
+        sources 辞書(system_prompt / skill / tool_code / verify_code /
+        entrypoint_code / dockerfile / requirements)。欠損ファイルは空文字。
+    """
+    sources: dict[str, str] = {}
+    for name, rel in MODULE_PATHS.items():
+        p = base_dir / rel
+        sources[_SOURCE_KEYS[name]] = p.read_text(encoding="utf-8") if p.exists() else ""
+    return sources
+
+
 class ModuleRegistry:
     """シードとrunワークスペースを束縛し、モジュール操作を提供する。
 
